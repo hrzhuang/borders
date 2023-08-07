@@ -50,7 +50,7 @@ next (Countries { recents }) =
                         }
                     )
                 Nothing -> ( Nothing, Countries { recents = recents } )
-    in Random.int 0 (Dict.size candidates)
+    in Random.int 0 (Dict.size candidates - 1)
         |> Random.map toCountries
 
 countries : Dict Int Country
