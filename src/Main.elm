@@ -563,8 +563,8 @@ white : Vec3
 white = vec3 1 1 1
 
 uniforms : InitializedModel a -> Uniforms
-uniforms { mapTexture, highlightTexture, countries, cameraDistance,
-        cameraLatitude, cameraLongitude } =
+uniforms { mapTexture, highlightTexture, cameraDistance, cameraLatitude,
+        cameraLongitude } =
     let
         cameraPos = Vec3.scale
             (1 + Animate.get cameraDistance)
