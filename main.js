@@ -1,7 +1,6 @@
 const map = document.getElementById("map");
 const highlight = document.getElementById("highlight");
 const highlightContainer = document.getElementById("highlight-container");
-const dot = document.getElementById("dot");
 const img = document.getElementById("img");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
