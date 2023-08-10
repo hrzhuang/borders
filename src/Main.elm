@@ -235,13 +235,13 @@ tryFinishInitialization loadingModel =
                 , countries = countries
                 , countryCode = country.code
                 , cameraDistance = Animate.with
-                    (animationConfig Animate.NoWrap)
+                    (animationConfig Animate.noWrap)
                     (countryCameraDistance country)
                 , cameraLatitude = Animate.with
-                    (animationConfig Animate.NoWrap)
+                    (animationConfig Animate.noWrap)
                     country.latitude
                 , cameraLongitude = Animate.with
-                    (animationConfig <| Animate.Wrap -180 180)
+                    (animationConfig <| Animate.wrap -180 180)
                     country.longitude
                 }
         _ -> LoadingInitialTexturesState loadingModel

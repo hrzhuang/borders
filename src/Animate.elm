@@ -1,14 +1,14 @@
-module Animate exposing (Animated, Config, Wrap(..), with, get, isActive, to,
-    frame)
+module Animate exposing (Animated, Config, Wrap, wrap, noWrap, with, get,
+    isActive, to, frame)
 
-type Wrap = NoWrap | Wrap Float Float
+type Wrap = Wrap Float Float | NoWrap
 
 type Animated = Animated
     -- spring config
     { mass : Float
     , stiffness : Float
     , damping : Float
-    , wrap : Wrap
+    , wrapOption : Wrap
     , displacementTolerance : Float
     , velocityTolerance : Float
     -- animation state
@@ -27,16 +27,21 @@ type alias Config =
     , velocityTolerance : Float
     }
 
+wrap : Float -> Float -> Wrap
+wrap = Wrap
+
+noWrap : Wrap
+noWrap = NoWrap
+
 with : Config -> Float -> Animated
-with { mass, stiffness, damping, wrap, displacementTolerance,
-        velocityTolerance } init =
+with config init =
     Animated
-        { mass = mass
-        , stiffness = stiffness
-        , damping = damping
-        , wrap = wrap
-        , displacementTolerance = displacementTolerance
-        , velocityTolerance = velocityTolerance
+        { mass = config.mass
+        , stiffness = config.stiffness
+        , damping = config.damping
+        , wrapOption = config.wrap
+        , displacementTolerance = config.displacementTolerance
+        , velocityTolerance = config.velocityTolerance
         , value = init
         , target = init
         , velocity = 0
@@ -54,11 +59,10 @@ to target (Animated animated) =
     Animated { animated | target = target, active = True }
 
 wrapDisplacement : Wrap -> Float -> Float -> Float
-wrapDisplacement wrap value target =
+wrapDisplacement option value target =
     let
         noWrapDisplacement = value - target
-    in case wrap of
-        NoWrap -> noWrapDisplacement
+    in case option of
         Wrap start end ->
             let
                 wrapLeftDisplacement = value - (start - (end - target))
@@ -69,11 +73,10 @@ wrapDisplacement wrap value target =
                 wrapRightDisplacement
             else
                 noWrapDisplacement
+        NoWrap -> noWrapDisplacement
 
 wrapValue : Wrap -> Float -> Float
-wrapValue wrap value = case wrap of
-    NoWrap ->
-        value
+wrapValue option value = case option of
     Wrap start end ->
         let
             period = end - start
@@ -83,14 +86,16 @@ wrapValue wrap value = case wrap of
             value + (toFloat << ceiling) ((start - value) / period) * period
         else
             value
+    NoWrap ->
+        value
 
 frame : Float -> Animated -> Animated
 frame delta (Animated animated) =
     let
-        { mass, stiffness, damping, wrap, displacementTolerance,
+        { mass, stiffness, damping, wrapOption, displacementTolerance,
             velocityTolerance, value, target, velocity, active } = animated
         seconds = delta / 1000
-        displacement = wrapDisplacement wrap value target
+        displacement = wrapDisplacement wrapOption value target
         acceleration = (negate stiffness * displacement - damping * velocity)
             / mass
     in if not active then
@@ -105,6 +110,6 @@ frame delta (Animated animated) =
             }
     else Animated
         { animated
-        | value = wrapValue wrap (value + seconds * velocity)
+        | value = wrapValue wrapOption (value + seconds * velocity)
         , velocity = velocity + seconds * acceleration
         }
