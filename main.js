@@ -10,8 +10,8 @@ const map = document.getElementById("map");
 const highlight = document.getElementById("highlight");
 const highlightContainer = document.getElementById("highlight-container");
 
-const svgWidth = 4096;
-const svgHeight = 2048;
+const svgWidth = 8192;
+const svgHeight = 4096;
 
 map.setAttribute("width", svgWidth);
 map.setAttribute("height", svgHeight);
