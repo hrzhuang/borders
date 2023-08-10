@@ -662,7 +662,7 @@ viewGraphics model = WebGL.toHtml
     [ WebGL.entity vertexShader fragmentShader mesh (uniforms model) ]
 
 viewControls : Bool -> String -> Html Msg
-viewControls disabled countryCode = Html.div
+viewControls enabled countryCode = Html.div
     [ Attrs.style "padding" "10px" ]
     [ Html.span
         [ Attrs.style "padding-right" "5px"
@@ -670,7 +670,7 @@ viewControls disabled countryCode = Html.div
         ]
         [ Html.text countryCode ]
     , Html.button
-        [ Attrs.disabled disabled
+        [ Attrs.disabled (not enabled)
         , Html.Events.onClick NextCountry
         ]
         [ Html.text "next country" ]
@@ -683,11 +683,11 @@ view model = case model of
     StandbyState standbyModel -> Html.div
         []
         [ viewGraphics standbyModel
-        , viewControls False standbyModel.countryCode
+        , viewControls True standbyModel.countryCode
         ]
     TransitionState transitionModel -> Html.div
         []
         [ viewGraphics transitionModel
-        , viewControls True transitionModel.countryCode
+        , viewControls False transitionModel.countryCode
         ]
     ErrorState -> Html.div [] []
