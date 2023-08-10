@@ -7,23 +7,19 @@
   <script src="main.js" defer></script>
   <style>
   body { margin: 0; }
-  #canvas { display: none; }
-  #img { display: none; }
   #highlight { display: none; }
   #map { display: none; }
   </style>
 </head>
 <body>
   <div id="elm"></div>
-  <canvas id="canvas" width="4096" height="2048"></canvas>
-  <img id="img"/>
-  <svg id="highlight" width="360" height="180" viewBox="0 0 360 180" xmlns="http://www.w3.org/2000/svg">
+  <svg id="highlight" viewBox="0 0 360 180" xmlns="http://www.w3.org/2000/svg">
     <style>
     #highlight-container { fill: #a44cd3; }
     </style>
     <g id="highlight-container"></g>
   </svg>
-  <svg id="map" width="360" height="180" viewBox="0 0 360 180" xmlns="http://www.w3.org/2000/svg">
+  <svg id="map" viewBox="0 0 360 180" xmlns="http://www.w3.org/2000/svg">
     <style>
     .color0 { fill: #59954a; }
     .color1 { fill: #80b145; }
