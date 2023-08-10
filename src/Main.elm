@@ -657,7 +657,6 @@ viewGraphics model = WebGL.toHtml
     , Attrs.height 800
     , Attrs.style "width" "400px"
     , Attrs.style "height" "400px"
-    , Attrs.style "display" "block"
     , Attrs.style "background-color" "#2e4482"
     ]
     [ WebGL.entity vertexShader fragmentShader mesh (uniforms model) ]
