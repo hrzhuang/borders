@@ -1,7 +1,8 @@
 module Countries exposing (Countries, Country, GeoCoords, Scale(..),
     HighlightMethod(..), init, next)
 
-import Dict exposing (Dict)
+import Array exposing (Array)
+import Set
 
 import Random exposing (Generator)
 
@@ -19,7 +20,7 @@ type alias Country =
     , highlightMethod : HighlightMethod
     }
 
-type Countries = Countries { recents : List (Int, Country) }
+type Countries = Countries { recents : List Int }
 
 geoCoords : Float -> Float -> GeoCoords
 geoCoords latitude longitude =
@@ -34,27 +35,28 @@ init = Countries { recents = [] }
 next : Countries -> Generator (Maybe Country, Countries)
 next (Countries { recents }) =
     let
-        candidates = Dict.diff countries (Dict.fromList recents)
-        fillHoles random = List.filter (Tuple.first >> (>=) random) recents
-            |> List.length
+        omitted = Set.fromList recents
+        numCandidates = Array.length countries - Set.size omitted
+        fillHoles random = Set.filter ((>=) random) omitted
+            |> Set.size
             |> (+) random
         toCountries random =
             let
                 index = fillHoles random
-            in case Dict.get index countries of
+            in case Array.get index countries of
                 Just country ->
                     ( Just country
                     , Countries
-                        { recents = (index, country) :: recents
+                        { recents = index :: recents
                             |> List.take maxRecentsLength
                         }
                     )
                 Nothing -> ( Nothing, Countries { recents = recents } )
-    in Random.int 0 (Dict.size candidates - 1)
+    in Random.int 0 (numCandidates - 1)
         |> Random.map toCountries
 
-countries : Dict Int Country
-countries = Dict.fromList <| List.indexedMap Tuple.pair
+countries : Array Country
+countries = Array.fromList
     [ { code = "af"
       , latitude = 33.924150466918945
       , longitude = 67.6884994506836
