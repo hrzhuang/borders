@@ -436,7 +436,7 @@ subscriptions model = case model of
 
 type alias Vertex =
     { pos : Vec3
-    , textureCoord : Vec2
+    , textureCoords : Vec2
     }
 
 type alias Triangle = (Vertex, Vertex, Vertex)
@@ -456,7 +456,7 @@ uvVertex u v =
         phi = u * 2*pi
     in
     { pos = vec3 (sin theta * cos phi) (sin theta * sin phi) (cos theta)
-    , textureCoord = vec2 u v
+    , textureCoords = vec2 u v
     }
 
 type alias UInterval =
@@ -593,7 +593,7 @@ uniforms { mapTexture, highlightTexture, cameraDistance, cameraLatitude,
 vertexShader : Shader Vertex Uniforms Varying
 vertexShader = [glsl|
         attribute vec3 pos;
-        attribute vec2 textureCoord;
+        attribute vec2 textureCoords;
         uniform mat4 rotation;
         uniform mat4 camera;
         uniform mat4 perspective;
@@ -601,7 +601,7 @@ vertexShader = [glsl|
         varying vec3 vPos;
         void main() {
             gl_Position = perspective * camera * rotation * vec4(pos, 1.0);
-            vTextureCoord = textureCoord;
+            vTextureCoord = textureCoords;
             vPos = mat3(rotation) * pos;
         }
     |]
