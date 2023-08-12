@@ -37,12 +37,16 @@ next (Countries { recents }) =
     let
         omitted = Set.fromList recents
         numCandidates = Array.length countries - Set.size omitted
-        fillHoles random = Set.filter ((>=) random) omitted
-            |> Set.size
-            |> (+) random
+        fillHoles random holes = case holes of
+            [] -> random
+            hole :: remainingHoles ->
+                if hole <= random then
+                    fillHoles (random + 1) remainingHoles
+                else
+                    random
         toCountries random =
             let
-                index = fillHoles random
+                index = Set.toList omitted |> fillHoles random
             in case Array.get index countries of
                 Just country ->
                     ( Just country
