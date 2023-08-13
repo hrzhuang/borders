@@ -4,6 +4,7 @@ import Dict
 import Task exposing (Task)
 
 import Browser
+import Browser.Dom as Dom
 import Browser.Events
 import Html exposing (Html)
 import Html.Attributes as Attrs
@@ -22,12 +23,16 @@ type alias Flags = String
 
 type alias GeneratingInitialCountryModel =
     { mapTexture : Maybe Texture
+    , windowWidth : Maybe Float
+    , windowHeight : Maybe Float
     , pageVisibility : Browser.Events.Visibility
     }
 
 type alias LoadingInitialTexturesModel =
     { mapTexture : Maybe Texture
     , highlightTexture : Maybe Texture
+    , windowWidth : Maybe Float
+    , windowHeight : Maybe Float
     , pageVisibility : Browser.Events.Visibility
     , countries : Countries
     , country : Country
@@ -37,6 +42,8 @@ type alias InitializedModel a =
     { a
     | mapTexture : Texture
     , highlightTexture : Texture
+    , windowWidth : Float
+    , windowHeight : Float
     , pageVisibility : Browser.Events.Visibility
     , countries : Countries
     , countryName : String
@@ -75,6 +82,7 @@ type Msg
     | AnswerUpdated String
     | SubmitButtonClicked
     | NextCountryButtonClicked
+    | GotWindowDimensions Float Float
     | PageVisibilityChange Browser.Events.Visibility
     | AnimationFrame Float
 
@@ -204,15 +212,24 @@ countryCameraDistance country = case country.scale of
  - ---
  -}
 
+gotViewport : Dom.Viewport -> Msg
+gotViewport { viewport } = GotWindowDimensions viewport.width viewport.height
+
+getWindowDimensions : Cmd Msg
+getWindowDimensions = Task.perform gotViewport Dom.getViewport
+
 init : Flags -> (Model, Cmd Msg)
 init mapTextureUrl =
     ( GeneratingInitialCountryState
         { mapTexture = Nothing
+        , windowWidth = Nothing
+        , windowHeight = Nothing
         -- this is a guess, but no significant harm when we are wrong
         , pageVisibility = Browser.Events.Visible
         }
     , Cmd.batch
         [ loadMapTexture mapTextureUrl
+        , getWindowDimensions
         , Random.generate generateCountryResult (Countries.next Countries.init)
         ]
     )
@@ -234,13 +251,19 @@ animationConfig wrap =
 
 tryFinishInitialization : LoadingInitialTexturesModel -> Model
 tryFinishInitialization loadingModel =
-    case (loadingModel.mapTexture, loadingModel.highlightTexture) of
-        (Just mapTexture, Just highlightTexture) ->
+    -- need nested tuples since elm does not have tuples with more than 3
+    -- elements
+    case ((loadingModel.mapTexture, loadingModel.highlightTexture),
+            (loadingModel.windowWidth, loadingModel.windowHeight)) of
+        ((Just mapTexture, Just highlightTexture),
+                (Just windowWidth, Just windowHeight)) ->
             let
                 { pageVisibility, countries, country } = loadingModel
             in AnsweringState
                 { mapTexture = mapTexture
                 , highlightTexture = highlightTexture
+                , windowWidth = windowWidth
+                , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , countryName = country.name
@@ -292,11 +315,14 @@ update msg model = case model of
         LoadHighlightTextureError -> (ErrorState, Cmd.none)
         GotCountries (country, countries) ->
             let
-                { mapTexture, pageVisibility } = generatingModel
+                { mapTexture, windowWidth, windowHeight, pageVisibility } =
+                    generatingModel
             in
             ( LoadingInitialTexturesState
                 { mapTexture = mapTexture
                 , highlightTexture = Nothing
+                , windowWidth = windowWidth
+                , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , country = country
@@ -307,6 +333,14 @@ update msg model = case model of
         AnswerUpdated _ -> (ErrorState, Cmd.none)
         SubmitButtonClicked -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        GotWindowDimensions width height ->
+            ( GeneratingInitialCountryState
+                { generatingModel
+                | windowWidth = Just width
+                , windowHeight = Just height
+                }
+            , Cmd.none
+            )
         PageVisibilityChange visibility ->
             ( GeneratingInitialCountryState
                 { generatingModel | pageVisibility = visibility }
@@ -332,6 +366,14 @@ update msg model = case model of
         AnswerUpdated _ -> (ErrorState, Cmd.none)
         SubmitButtonClicked -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        GotWindowDimensions width height ->
+            ( LoadingInitialTexturesState
+                { loadingModel
+                | windowWidth = Just width
+                , windowHeight = Just height
+                }
+            , Cmd.none
+            )
         PageVisibilityChange visibility ->
             ( LoadingInitialTexturesState
                 { loadingModel | pageVisibility = visibility }
@@ -352,13 +394,15 @@ update msg model = case model of
             )
         SubmitButtonClicked ->
             let
-                { mapTexture, highlightTexture, pageVisibility, countries,
-                    countryName, cameraDistance, cameraLatitude,
-                    cameraLongitude } = answeringModel
+                { mapTexture, highlightTexture, windowWidth, windowHeight,
+                    pageVisibility, countries, countryName, cameraDistance,
+                    cameraLatitude, cameraLongitude } = answeringModel
             in
             ( DisplayResultsState
                 { mapTexture = mapTexture
                 , highlightTexture = highlightTexture
+                , windowWidth = windowWidth
+                , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , countryName = countryName
@@ -370,6 +414,11 @@ update msg model = case model of
             , Cmd.none
             )
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        GotWindowDimensions width height ->
+            ( AnsweringState
+                { answeringModel | windowWidth = width, windowHeight = height }
+            , Cmd.none
+            )
         PageVisibilityChange visibility ->
             ( AnsweringState { answeringModel | pageVisibility = visibility }
             , Cmd.none
@@ -386,13 +435,15 @@ update msg model = case model of
         LoadHighlightTextureError -> (ErrorState, Cmd.none)
         GotCountries (country, countries) ->
             let
-                { mapTexture, highlightTexture, pageVisibility, countryName,
-                    cameraDistance, cameraLatitude, cameraLongitude,
-                    correct } = resultsModel
+                { mapTexture, highlightTexture, windowWidth, windowHeight,
+                    pageVisibility, countryName, cameraDistance,
+                    cameraLatitude, cameraLongitude, correct } = resultsModel
             in
             ( LoadingNewHighlightState
                 { mapTexture = mapTexture
                 , highlightTexture = highlightTexture
+                , windowWidth = windowWidth
+                , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , countryName = countryName
@@ -414,6 +465,11 @@ update msg model = case model of
             ( DisplayResultsState resultsModel
             , Random.generate generateCountryResult (Countries.next countries)
             )
+        GotWindowDimensions width height ->
+            ( DisplayResultsState
+                { resultsModel | windowWidth = width, windowHeight = height }
+            , Cmd.none
+            )
         PageVisibilityChange visibility ->
             ( DisplayResultsState
                 { resultsModel | pageVisibility = visibility }
@@ -429,13 +485,15 @@ update msg model = case model of
         GotHighlightTextureUrl url -> (model, loadHighlightTexture url)
         GotHighlightTexture highlightTexture ->
             let
-                { mapTexture, cameraDistance, pageVisibility, countries,
-                        cameraLatitude, cameraLongitude, newCountry } =
-                    loadingModel
+                { mapTexture, cameraDistance, windowWidth, windowHeight,
+                    pageVisibility, countries, cameraLatitude, cameraLongitude,
+                    newCountry } = loadingModel
             in
             ( AnsweringState
                 { mapTexture = mapTexture
                 , highlightTexture = highlightTexture
+                , windowWidth = windowWidth
+                , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , countryName = newCountry.name
@@ -457,6 +515,11 @@ update msg model = case model of
         AnswerUpdated _ -> (ErrorState, Cmd.none)
         SubmitButtonClicked -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        GotWindowDimensions width height ->
+            ( LoadingNewHighlightState
+                { loadingModel | windowWidth = width, windowHeight = height }
+            , Cmd.none
+            )
         PageVisibilityChange visibility ->
             ( LoadingNewHighlightState
                 { loadingModel | pageVisibility = visibility }
@@ -473,6 +536,10 @@ update msg model = case model of
  - ---
  -}
 
+windowResized : Int -> Int -> Msg
+windowResized width height =
+    GotWindowDimensions (toFloat width) (toFloat height)
+
 animationSubscriptions : InitializedModel a -> Sub Msg
 animationSubscriptions { pageVisibility, cameraDistance, cameraLatitude,
         cameraLongitude } =
@@ -486,22 +553,28 @@ animationSubscriptions { pageVisibility, cameraDistance, cameraLatitude,
 
 subscriptions : Model -> Sub Msg
 subscriptions model = case model of
-    GeneratingInitialCountryState _ ->
-        Browser.Events.onVisibilityChange PageVisibilityChange
+    GeneratingInitialCountryState _ -> Sub.batch
+        [ Browser.Events.onResize windowResized
+        , Browser.Events.onVisibilityChange PageVisibilityChange
+        ]
     LoadingInitialTexturesState _ -> Sub.batch
         [ highlightTextureUrl GotHighlightTextureUrl
+        , Browser.Events.onResize windowResized
         , Browser.Events.onVisibilityChange PageVisibilityChange
         ]
     AnsweringState answeringModel -> Sub.batch
-        [ Browser.Events.onVisibilityChange PageVisibilityChange
+        [ Browser.Events.onResize windowResized
+        , Browser.Events.onVisibilityChange PageVisibilityChange
         , animationSubscriptions answeringModel
         ]
     DisplayResultsState resultsModel -> Sub.batch
-        [ Browser.Events.onVisibilityChange PageVisibilityChange
+        [ Browser.Events.onResize windowResized
+        , Browser.Events.onVisibilityChange PageVisibilityChange
         , animationSubscriptions resultsModel
         ]
     LoadingNewHighlightState loadingModel -> Sub.batch
         [ highlightTextureUrl GotHighlightTextureUrl
+        , Browser.Events.onResize windowResized
         , Browser.Events.onVisibilityChange PageVisibilityChange
         , animationSubscriptions loadingModel
         ]
@@ -641,12 +714,13 @@ white : Vec3
 white = vec3 1 1 1
 
 uniforms : InitializedModel a -> Uniforms
-uniforms { mapTexture, highlightTexture, cameraDistance, cameraLatitude,
-        cameraLongitude } =
+uniforms { mapTexture, highlightTexture, windowWidth, windowHeight,
+        cameraDistance, cameraLatitude, cameraLongitude } =
     let
         cameraPos = Vec3.scale
             (1 + Animate.get cameraDistance)
             (Vec3.negate Vec3.i)
+        aspectRatio = windowWidth / windowHeight
     in
     { rotation =
         Mat4.makeRotate
@@ -656,7 +730,7 @@ uniforms { mapTexture, highlightTexture, cameraDistance, cameraLatitude,
             (Animate.get cameraLongitude |> degrees |> negate)
             Vec3.k
     , camera = Mat4.makeLookAt cameraPos (vec3 0 0 0) Vec3.k
-    , perspective = Mat4.makePerspective 45 1 0.01 100
+    , perspective = Mat4.makePerspective 45 aspectRatio 0.01 100
     , mapTexture = mapTexture
     , highlightTexture = highlightTexture
     , ambientBrightness = 0.5
@@ -730,18 +804,30 @@ fragmentShader = [glsl|
     |]
 
 viewGraphics : InitializedModel a -> Html msg
-viewGraphics model = WebGL.toHtml
-    [ Attrs.width 800
-    , Attrs.height 800
-    , Attrs.style "width" "400px"
-    , Attrs.style "height" "400px"
-    , Attrs.style "display" "block"
-    , Attrs.style "background-color" "#2e4482"
-    ]
-    [ WebGL.entity vertexShader fragmentShader mesh (uniforms model) ]
+viewGraphics model =
+    let
+        width = round model.windowWidth
+        height = round model.windowHeight
+    in
+    WebGL.toHtml
+        [ Attrs.width (width * 2)
+        , Attrs.height (height * 2)
+        , Attrs.style "width" (String.fromInt width ++ "px")
+        , Attrs.style "height" (String.fromInt height ++ "px")
+        , Attrs.style "display" "block"
+        , Attrs.style "background-color" "#2e4482"
+        ]
+        [ WebGL.entity vertexShader fragmentShader mesh (uniforms model) ]
 
 viewUiContainer : List (Html msg) -> Html msg
-viewUiContainer contents = Html.div [ Attrs.style "padding" "12px" ] contents
+viewUiContainer contents = Html.div
+    [ Attrs.style "position" "absolute"
+    , Attrs.style "top" "16px"
+    , Attrs.style "left" "16px"
+    , Attrs.style "padding" "12px"
+    , Attrs.style "background-color" "white"
+    ]
+    contents
 
 viewAnswering : AnsweringModel -> List (Html Msg)
 viewAnswering { answer } =
