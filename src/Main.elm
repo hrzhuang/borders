@@ -9,6 +9,7 @@ import Browser.Events
 import Html exposing (Html)
 import Html.Attributes as Attrs
 import Html.Events
+import Json.Decode as Decode exposing (Decoder)
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector2 as Vec2 exposing (Vec2, vec2)
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
@@ -47,15 +48,14 @@ type alias InitializedModel a =
     , pageVisibility : Browser.Events.Visibility
     , countries : Countries
     , countryName : String
+    , answer : String
     , cameraDistance : Animated
     , cameraLatitude : Animated
     , cameraLongitude : Animated
     }
 
 type alias AnsweringModel = InitializedModel
-    { countryAlternativeNames : List String
-    , answer : String
-    }
+    { countryAlternativeNames : List String }
 
 type alias SubmittedModel a = InitializedModel { a | correct : Bool }
 
@@ -80,7 +80,7 @@ type Msg
     | GotCountries (Country, Countries)
     | GenerateCountryError -- this should never actually happen
     | AnswerUpdated String
-    | SubmitButtonClicked
+    | EnterKeyPressed
     | NextCountryButtonClicked
     | GotWindowDimensions Float Float
     | PageVisibilityChange Browser.Events.Visibility
@@ -331,7 +331,7 @@ update msg model = case model of
             )
         GenerateCountryError -> (ErrorState, Cmd.none)
         AnswerUpdated _ -> (ErrorState, Cmd.none)
-        SubmitButtonClicked -> (ErrorState, Cmd.none)
+        EnterKeyPressed -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( GeneratingInitialCountryState
@@ -364,7 +364,7 @@ update msg model = case model of
         GotCountries _ -> (ErrorState, Cmd.none)
         GenerateCountryError -> (ErrorState, Cmd.none)
         AnswerUpdated _ -> (ErrorState, Cmd.none)
-        SubmitButtonClicked -> (ErrorState, Cmd.none)
+        EnterKeyPressed -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( tryFinishInitialization
@@ -392,11 +392,12 @@ update msg model = case model of
             ( AnsweringState { answeringModel | answer = newAnswer }
             , Cmd.none
             )
-        SubmitButtonClicked ->
+        EnterKeyPressed ->
             let
                 { mapTexture, highlightTexture, windowWidth, windowHeight,
-                    pageVisibility, countries, countryName, cameraDistance,
-                    cameraLatitude, cameraLongitude } = answeringModel
+                        pageVisibility, countries, countryName, answer,
+                        cameraDistance, cameraLatitude, cameraLongitude } =
+                    answeringModel
             in
             ( DisplayResultsState
                 { mapTexture = mapTexture
@@ -406,6 +407,7 @@ update msg model = case model of
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , countryName = countryName
+                , answer = answer
                 , cameraDistance = cameraDistance
                 , cameraLatitude = cameraLatitude
                 , cameraLongitude = cameraLongitude
@@ -436,7 +438,7 @@ update msg model = case model of
         GotCountries (country, countries) ->
             let
                 { mapTexture, highlightTexture, windowWidth, windowHeight,
-                    pageVisibility, countryName, cameraDistance,
+                    pageVisibility, countryName, answer, cameraDistance,
                     cameraLatitude, cameraLongitude, correct } = resultsModel
             in
             ( LoadingNewHighlightState
@@ -447,6 +449,7 @@ update msg model = case model of
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , countryName = countryName
+                , answer = answer
                 , cameraDistance = cameraDistance
                 , cameraLatitude = cameraLatitude
                 , cameraLongitude = cameraLongitude
@@ -457,7 +460,7 @@ update msg model = case model of
             )
         GenerateCountryError -> (ErrorState, Cmd.none)
         AnswerUpdated _ -> (ErrorState, Cmd.none)
-        SubmitButtonClicked -> (ErrorState, Cmd.none)
+        EnterKeyPressed -> (ErrorState, Cmd.none)
         NextCountryButtonClicked ->
             let
                 { countries } = resultsModel
@@ -497,6 +500,7 @@ update msg model = case model of
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , countryName = newCountry.name
+                , answer = ""
                 , cameraDistance = Animate.to
                     (countryCameraDistance newCountry)
                     cameraDistance
@@ -505,7 +509,6 @@ update msg model = case model of
                 , cameraLongitude =
                     Animate.to newCountry.longitude cameraLongitude
                 , countryAlternativeNames = newCountry.alternativeNames
-                , answer = ""
                 }
             , Cmd.none
             )
@@ -513,7 +516,7 @@ update msg model = case model of
         GotCountries _ -> (ErrorState, Cmd.none)
         GenerateCountryError -> (ErrorState, Cmd.none)
         AnswerUpdated _ -> (ErrorState, Cmd.none)
-        SubmitButtonClicked -> (ErrorState, Cmd.none)
+        EnterKeyPressed -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( LoadingNewHighlightState
@@ -820,51 +823,58 @@ viewGraphics model =
         [ WebGL.entity vertexShader fragmentShader mesh (uniforms model) ]
 
 viewUiContainer : List (Html msg) -> Html msg
-viewUiContainer contents = Html.div
-    [ Attrs.style "position" "absolute"
-    , Attrs.style "top" "16px"
-    , Attrs.style "left" "16px"
-    , Attrs.style "padding" "12px"
-    , Attrs.style "background-color" "white"
-    ]
-    contents
+viewUiContainer = Html.div [ Attrs.id "ui-container" ]
+
+enterKeyDecoder : Decoder Msg
+enterKeyDecoder =
+    let
+        check key = case key == "Enter" of
+            True -> Decode.succeed EnterKeyPressed
+            False -> Decode.fail "Not enter key"
+    in
+    Decode.field "key" Decode.string
+        |> Decode.andThen check
 
 viewAnswering : AnsweringModel -> List (Html Msg)
 viewAnswering { answer } =
-    [ Html.div [] [ Html.text "What country is this?" ]
-    , Html.div
-        [ Attrs.style "padding-top" "8px" ]
-        [ Html.input
-            [ Attrs.placeholder "Answer"
-            , Attrs.value answer
-            , Html.Events.onInput AnswerUpdated
-            ]
-            []
-        , Html.span
-            [ Attrs.style "padding-left" "4px" ]
-            [ Html.button
-                [ Html.Events.onClick SubmitButtonClicked ]
-                [ Html.text "Submit" ]
-            ]
+    [ Html.div [ Attrs.class "heading" ] [ Html.text "What country is this?" ]
+    , Html.input
+        [ Attrs.id "answer"
+        , Attrs.placeholder "Answer"
+        , Attrs.value answer
+        , Html.Events.onInput AnswerUpdated
+        , Html.Events.on "keyup" enterKeyDecoder
         ]
+        []
     ]
 
 viewSubmitted : Bool -> SubmittedModel a -> List (Html Msg)
-viewSubmitted nextCountryButtonEnabled { correct } =
+viewSubmitted nextCountryButtonEnabled { countryName, answer, correct } =
     let
-        text = case correct of
+        heading = case correct of
             True -> "Correct!"
             False -> "Incorrect..."
+        incorrect = case correct of
+            True -> []
+            False ->
+                [ Html.div
+                    [ Attrs.id "incorrect" ]
+                    [ Html.text ("❌ " ++ answer) ]
+                ]
     in
-    [ Html.div [] [ Html.text text ]
-    , Html.div
-        [ Attrs.style "padding-top" "8px" ]
-        [ Html.button
-            [ Attrs.disabled (not nextCountryButtonEnabled)
-            , Html.Events.onClick NextCountryButtonClicked
-            ]
-            [ Html.text "Continue" ]
+    [ Html.div [ Attrs.class "heading" ] [ Html.text heading ]
+    , Html.div [ Attrs.id "incorrect-correct" ] <|
+        incorrect ++
+        [ Html.div
+            [ Attrs.id "correct" ]
+            [ Html.text ("✅ " ++ countryName) ]
         ]
+    , Html.button
+        [ Attrs.id "continue"
+        , Attrs.disabled (not nextCountryButtonEnabled)
+        , Html.Events.onClick NextCountryButtonClicked
+        ]
+        [ Html.text "Continue" ]
     ]
 
 view : Model -> Html Msg

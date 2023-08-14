@@ -5,10 +5,89 @@
   <title>Borders</title>
   <script src="elm.js"></script>
   <script src="main.js" defer></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600&display=swap" rel="stylesheet">
   <style>
-  body { margin: 0; }
-  #highlight { display: none; }
-  #map { display: none; }
+  body {
+    margin: 0;
+  }
+
+  #highlight {
+    display: none;
+  }
+
+  #map {
+    display: none;
+  }
+
+  #ui-container {
+    position: absolute;
+    top: 32px;
+    left: 32px;
+    width: 384px;
+    padding: 24px;
+    background-color: white;
+    border-radius: 16px;
+    box-shadow: 0 15px 35px rgba(0,0,0,.2);
+    font-family: Nunito, sans-serif;
+  }
+
+  .heading {
+    font-size: 24px;
+  }
+
+  #answer {
+    margin-top: 12px;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 8px;
+    border: none;
+    border-radius: 8px;
+    background-color: #ececec;
+    font-size: 16px;
+  }
+
+  #answer::placeholder {
+    color: #767b8d;
+    opacity: 1;
+  }
+
+  #incorrect-correct {
+    margin-top: 16px;
+  }
+
+  #incorrect {
+    background-color: #fee2e2;
+    margin-bottom: 12px;
+    padding: 12px;
+    color: #7f1d1d;
+    border-radius: 8px;
+  }
+
+  #correct {
+    background-color: #dcfce7;
+    padding: 12px;
+    color: #14532D;
+    border-radius: 8px;
+  }
+
+  #continue {
+    font-size: 16px;
+    background-color: #a855f7;
+    border: none;
+    color: white;
+    border-radius: 8px;
+    padding: 12px;
+    font-weight: 600;
+    width: 100%;
+    margin-top: 16px;
+    cursor: pointer;
+  }
+
+  #continue:hover {
+    background-color: #c084fc;
+  }
   </style>
 </head>
 <body>
