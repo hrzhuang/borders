@@ -61,13 +61,20 @@ type alias SubmittedModel a = InitializedModel { a | correct : Bool }
 
 type alias DisplayResultsModel = SubmittedModel {}
 
-type alias LoadingNewHighlightModel = SubmittedModel { newCountry : Country }
+type alias GeneratingNewCountryModel = SubmittedModel
+    { continuedUsingEnterKey : Bool }
+
+type alias LoadingNewHighlightModel = SubmittedModel
+    { continuedUsingEnterKey : Bool
+    , newCountry : Country
+    }
 
 type Model
     = GeneratingInitialCountryState GeneratingInitialCountryModel
     | LoadingInitialTexturesState LoadingInitialTexturesModel
     | AnsweringState AnsweringModel
     | DisplayResultsState DisplayResultsModel
+    | GeneratingNewCountryState GeneratingNewCountryModel
     | LoadingNewHighlightState LoadingNewHighlightModel
     | ErrorState
 
@@ -82,6 +89,8 @@ type Msg
     | AnswerUpdated String
     | EnterKeyPressed
     | NextCountryButtonClicked
+    | AnswerFieldFocused
+    | AnswerFieldFocusError
     | GotWindowDimensions Float Float
     | PageVisibilityChange Browser.Events.Visibility
     | AnimationFrame Float
@@ -207,6 +216,16 @@ countryCameraDistance country = case country.scale of
     Countries.Medium -> 1.25
     Countries.Large -> 2.5
 
+enterKeyDecoder : Decoder Msg
+enterKeyDecoder =
+    let
+        check key = case key == "Enter" of
+            True -> Decode.succeed EnterKeyPressed
+            False -> Decode.fail "Not enter key"
+    in
+    Decode.field "key" Decode.string
+        |> Decode.andThen check
+
 {- ---
  - init
  - ---
@@ -290,6 +309,11 @@ checkAnswer { countryName, countryAlternativeNames, answer } =
     in
     lowerAnswer == lowerName || List.member lowerAnswer lowerAlternativeNames
 
+answerFieldFocusResult : Result Dom.Error () -> Msg
+answerFieldFocusResult result = case result of
+    Ok _ -> AnswerFieldFocused
+    Err _ -> AnswerFieldFocusError
+
 updateAnimation : Float -> InitializedModel a -> InitializedModel a
 updateAnimation delta model =
     let
@@ -333,6 +357,8 @@ update msg model = case model of
         AnswerUpdated _ -> (ErrorState, Cmd.none)
         EnterKeyPressed -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        AnswerFieldFocused -> (ErrorState, Cmd.none)
+        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( GeneratingInitialCountryState
                 { generatingModel
@@ -366,6 +392,8 @@ update msg model = case model of
         AnswerUpdated _ -> (ErrorState, Cmd.none)
         EnterKeyPressed -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        AnswerFieldFocused -> (ErrorState, Cmd.none)
+        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( tryFinishInitialization
                 { loadingModel
@@ -416,6 +444,8 @@ update msg model = case model of
             , Cmd.none
             )
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        AnswerFieldFocused -> ( AnsweringState answeringModel, Cmd.none )
+        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( AnsweringState
                 { answeringModel | windowWidth = width, windowHeight = height }
@@ -435,13 +465,17 @@ update msg model = case model of
         GotHighlightTextureUrl _ -> (ErrorState, Cmd.none)
         GotHighlightTexture _ -> (ErrorState, Cmd.none)
         LoadHighlightTextureError -> (ErrorState, Cmd.none)
-        GotCountries (country, countries) ->
+        GotCountries _ -> (ErrorState, Cmd.none)
+        GenerateCountryError -> (ErrorState, Cmd.none)
+        AnswerUpdated _ -> (ErrorState, Cmd.none)
+        EnterKeyPressed ->
             let
                 { mapTexture, highlightTexture, windowWidth, windowHeight,
-                    pageVisibility, countryName, answer, cameraDistance,
-                    cameraLatitude, cameraLongitude, correct } = resultsModel
+                    pageVisibility, countries, countryName, answer,
+                    cameraDistance, cameraLatitude, cameraLongitude,
+                    correct } = resultsModel
             in
-            ( LoadingNewHighlightState
+            ( GeneratingNewCountryState
                 { mapTexture = mapTexture
                 , highlightTexture = highlightTexture
                 , windowWidth = windowWidth
@@ -454,20 +488,36 @@ update msg model = case model of
                 , cameraLatitude = cameraLatitude
                 , cameraLongitude = cameraLongitude
                 , correct = correct
-                , newCountry = country
+                , continuedUsingEnterKey = True
                 }
-            , highlightCountry country
-            )
-        GenerateCountryError -> (ErrorState, Cmd.none)
-        AnswerUpdated _ -> (ErrorState, Cmd.none)
-        EnterKeyPressed -> (ErrorState, Cmd.none)
-        NextCountryButtonClicked ->
-            let
-                { countries } = resultsModel
-            in
-            ( DisplayResultsState resultsModel
             , Random.generate generateCountryResult (Countries.next countries)
             )
+        NextCountryButtonClicked ->
+            let
+                { mapTexture, highlightTexture, windowWidth, windowHeight,
+                    pageVisibility, countries, countryName, answer,
+                    cameraDistance, cameraLatitude, cameraLongitude,
+                    correct } = resultsModel
+            in
+            ( GeneratingNewCountryState
+                { mapTexture = mapTexture
+                , highlightTexture = highlightTexture
+                , windowWidth = windowWidth
+                , windowHeight = windowHeight
+                , pageVisibility = pageVisibility
+                , countries = countries
+                , countryName = countryName
+                , answer = answer
+                , cameraDistance = cameraDistance
+                , cameraLatitude = cameraLatitude
+                , cameraLongitude = cameraLongitude
+                , correct = correct
+                , continuedUsingEnterKey = False
+                }
+            , Random.generate generateCountryResult (Countries.next countries)
+            )
+        AnswerFieldFocused -> ( DisplayResultsState resultsModel, Cmd.none )
+        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( DisplayResultsState
                 { resultsModel | windowWidth = width, windowHeight = height }
@@ -482,6 +532,61 @@ update msg model = case model of
             ( DisplayResultsState (updateAnimation delta resultsModel)
             , Cmd.none
             )
+    GeneratingNewCountryState generatingModel -> case msg of
+        GotMapTexture _ -> (ErrorState, Cmd.none)
+        LoadMapTextureError -> (ErrorState, Cmd.none)
+        GotHighlightTextureUrl _ -> (ErrorState, Cmd.none)
+        GotHighlightTexture _ -> (ErrorState, Cmd.none)
+        LoadHighlightTextureError -> (ErrorState, Cmd.none)
+        GotCountries (country, countries) ->
+            let
+                { mapTexture, highlightTexture, windowWidth, windowHeight,
+                    pageVisibility, countryName, answer, cameraDistance,
+                    cameraLatitude, cameraLongitude, correct,
+                    continuedUsingEnterKey } = generatingModel
+            in
+            ( LoadingNewHighlightState
+                { mapTexture = mapTexture
+                , highlightTexture = highlightTexture
+                , windowWidth = windowWidth
+                , windowHeight = windowHeight
+                , pageVisibility = pageVisibility
+                , countries = countries
+                , countryName = countryName
+                , answer = answer
+                , cameraDistance = cameraDistance
+                , cameraLatitude = cameraLatitude
+                , cameraLongitude = cameraLongitude
+                , correct = correct
+                , continuedUsingEnterKey = continuedUsingEnterKey
+                , newCountry = country
+                }
+            , highlightCountry country
+            )
+        GenerateCountryError -> (ErrorState, Cmd.none)
+        AnswerUpdated _ -> (ErrorState, Cmd.none)
+        EnterKeyPressed -> (ErrorState, Cmd.none)
+        NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        AnswerFieldFocused ->
+            ( GeneratingNewCountryState generatingModel, Cmd.none )
+        AnswerFieldFocusError -> (ErrorState, Cmd.none)
+        GotWindowDimensions width height ->
+            ( GeneratingNewCountryState
+                { generatingModel
+                | windowWidth = width
+                , windowHeight = height
+                }
+            , Cmd.none
+            )
+        PageVisibilityChange visibility ->
+            ( GeneratingNewCountryState
+                { generatingModel | pageVisibility = visibility }
+            , Cmd.none
+            )
+        AnimationFrame delta ->
+            ( GeneratingNewCountryState (updateAnimation delta generatingModel)
+            , Cmd.none
+            )
     LoadingNewHighlightState loadingModel -> case msg of
         GotMapTexture _ -> (ErrorState, Cmd.none)
         LoadMapTextureError -> (ErrorState, Cmd.none)
@@ -490,7 +595,7 @@ update msg model = case model of
             let
                 { mapTexture, cameraDistance, windowWidth, windowHeight,
                     pageVisibility, countries, cameraLatitude, cameraLongitude,
-                    newCountry } = loadingModel
+                    continuedUsingEnterKey, newCountry } = loadingModel
             in
             ( AnsweringState
                 { mapTexture = mapTexture
@@ -510,7 +615,10 @@ update msg model = case model of
                     Animate.to newCountry.longitude cameraLongitude
                 , countryAlternativeNames = newCountry.alternativeNames
                 }
-            , Cmd.none
+            , case continuedUsingEnterKey of
+                True -> Dom.focus "answer"
+                    |> Task.attempt answerFieldFocusResult
+                False -> Cmd.none
             )
         LoadHighlightTextureError -> (ErrorState, Cmd.none)
         GotCountries _ -> (ErrorState, Cmd.none)
@@ -518,6 +626,9 @@ update msg model = case model of
         AnswerUpdated _ -> (ErrorState, Cmd.none)
         EnterKeyPressed -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        AnswerFieldFocused ->
+            ( LoadingNewHighlightState loadingModel, Cmd.none )
+        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( LoadingNewHighlightState
                 { loadingModel | windowWidth = width, windowHeight = height }
@@ -573,7 +684,13 @@ subscriptions model = case model of
     DisplayResultsState resultsModel -> Sub.batch
         [ Browser.Events.onResize windowResized
         , Browser.Events.onVisibilityChange PageVisibilityChange
+        , Browser.Events.onKeyUp enterKeyDecoder
         , animationSubscriptions resultsModel
+        ]
+    GeneratingNewCountryState generatingModel -> Sub.batch
+        [ Browser.Events.onResize windowResized
+        , Browser.Events.onVisibilityChange PageVisibilityChange
+        , animationSubscriptions generatingModel
         ]
     LoadingNewHighlightState loadingModel -> Sub.batch
         [ highlightTextureUrl GotHighlightTextureUrl
@@ -825,25 +942,18 @@ viewGraphics model =
 viewUiContainer : List (Html msg) -> Html msg
 viewUiContainer = Html.div [ Attrs.id "ui-container" ]
 
-enterKeyDecoder : Decoder Msg
-enterKeyDecoder =
-    let
-        check key = case key == "Enter" of
-            True -> Decode.succeed EnterKeyPressed
-            False -> Decode.fail "Not enter key"
-    in
-    Decode.field "key" Decode.string
-        |> Decode.andThen check
-
 viewAnswering : AnsweringModel -> List (Html Msg)
 viewAnswering { answer } =
+    let
+        decoder = Decode.map (\msg -> (msg, True)) enterKeyDecoder
+    in
     [ Html.div [ Attrs.class "heading" ] [ Html.text "What country is this?" ]
     , Html.input
         [ Attrs.id "answer"
         , Attrs.placeholder "Answer"
         , Attrs.value answer
         , Html.Events.onInput AnswerUpdated
-        , Html.Events.on "keyup" enterKeyDecoder
+        , Html.Events.stopPropagationOn "keyup" decoder
         ]
         []
     ]
@@ -890,6 +1000,11 @@ view model = case model of
         []
         [ viewGraphics resultsModel
         , viewUiContainer (viewSubmitted True resultsModel)
+        ]
+    GeneratingNewCountryState generatingModel -> Html.div
+        []
+        [ viewGraphics generatingModel
+        , viewUiContainer (viewSubmitted False generatingModel)
         ]
     LoadingNewHighlightState loadingModel -> Html.div
         []
