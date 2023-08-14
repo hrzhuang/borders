@@ -1,0 +1,33 @@
+name: Deploy to GitHub Pages
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Elm
+        uses: hrzhuang/install-elm@v1
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Build
+        run: make
+        shell: bash
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: build
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v2
