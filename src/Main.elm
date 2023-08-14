@@ -367,7 +367,7 @@ update msg model = case model of
         SubmitButtonClicked -> (ErrorState, Cmd.none)
         NextCountryButtonClicked -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
-            ( LoadingInitialTexturesState
+            ( tryFinishInitialization
                 { loadingModel
                 | windowWidth = Just width
                 , windowHeight = Just height
