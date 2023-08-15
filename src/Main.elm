@@ -112,6 +112,8 @@ port drawDots : List Dot -> Cmd msg
 port sendWindowDimensionsInitializing : WindowDimensions -> Cmd msg
 port sendWindowDimensionsInitialized : WindowDimensions -> Cmd msg
 port sendUniforms : Encode.Value -> Cmd msg
+port sendCorrect : () -> Cmd msg
+port sendWrong : () -> Cmd msg
 port jsReadySignal : (() -> msg) -> Sub msg
 
 fillCountry : Country -> Cmd msg
@@ -355,6 +357,7 @@ update msg model = case model of
                 { windowWidth, windowHeight, pageVisibility, countries,
                     countryName, answer, cameraDistance, cameraLatitude,
                     cameraLongitude } = answeringModel
+                correct = checkAnswer answeringModel
             in
             ( DisplayResultsState
                 { windowWidth = windowWidth
@@ -366,9 +369,11 @@ update msg model = case model of
                 , cameraDistance = cameraDistance
                 , cameraLatitude = cameraLatitude
                 , cameraLongitude = cameraLongitude
-                , correct = checkAnswer answeringModel
+                , correct = correct
                 }
-            , Cmd.none
+            , case correct of
+                True -> sendCorrect ()
+                False -> sendWrong ()
             )
         AnswerFieldFocused -> ( AnsweringState answeringModel, Cmd.none )
         GotWindowDimensions width height ->

@@ -7,6 +7,33 @@ const elm = Elm.Main.init({ node: document.getElementById("ui") });
 
 
 /* ---
+ * playing sounds
+ * ---
+ */
+
+const correctSound = new Audio("correct.wav");
+const wrongSound = new Audio("wrong.mp3");
+
+const listeningForCorrect = new Promise(resolve => {
+    correctSound.oncanplaythrough = () => {
+        elm.ports.sendCorrect.subscribe(() => {
+            correctSound.play();
+        });
+        resolve();
+    };
+});
+
+const listeningForWrong = new Promise(resolve => {
+    wrongSound.oncanplaythrough = () => {
+        elm.ports.sendWrong.subscribe(() => {
+            wrongSound.play();
+        });
+        resolve();
+    };
+});
+
+
+/* ---
  * get webgl context
  * ---
  */
@@ -331,7 +358,8 @@ const updateHighlightTexture = () => {
 
     Promise.all([glCanvasInitialized, listeningForInitializedWindowDimensions,
             listeningForUniforms, mapTextureLoaded,
-            highlightTextureLoaded]).then(() => {
+            highlightTextureLoaded, listeningForCorrect,
+            listeningForWrong]).then(() => {
         elm.ports.jsReadySignal.send(null);
     });
 };
