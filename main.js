@@ -280,8 +280,6 @@ const loadSvgImage = svg => new Promise(resolve => {
 
 // loads image into the current active texture
 const loadTexture = (gl, image) => {
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
     const level = 0;
     const internalFormat = gl.RGBA;
     const srcFormat = gl.RGBA;
@@ -312,8 +310,17 @@ gl.uniform1i(highlightTexture, 1);
 
 const mapTextureLoaded = loadSvgImage(map).then(mapImage => {
     gl.activeTexture(gl.TEXTURE0);
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
     loadTexture(gl, mapImage);
 });
+
+// initialize highlight texture
+{
+    gl.activeTexture(gl.TEXTURE1);
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+}
 
 const updateHighlightTexture = () => {
     const highlightTextureLoaded = loadSvgImage(highlight)
