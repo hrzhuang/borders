@@ -225,7 +225,7 @@ init () =
 animationConfig : Animate.Wrap -> Animate.Config
 animationConfig wrap =
     { mass = 1
-    , stiffness = 5
+    , stiffness = 4
     , damping = 4
     , wrap = wrap
     , displacementTolerance = 1e-3
