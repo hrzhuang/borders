@@ -1,7 +1,6 @@
 port module Main exposing (main)
 
-import Dict
-import Task exposing (Task)
+import Task
 
 import Browser
 import Browser.Dom as Dom
@@ -10,41 +9,36 @@ import Html exposing (Html)
 import Html.Attributes as Attrs
 import Html.Events
 import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector2 as Vec2 exposing (Vec2, vec2)
 import Math.Vector3 as Vec3 exposing (Vec3, vec3)
 import Random
-import WebGL exposing (Mesh, Shader)
-import WebGL.Texture as Texture exposing (Texture)
 
 import Animate exposing (Animated)
 import Countries exposing (Countries, Country, GeoCoords)
 
-type alias Flags = String
+type alias Flags = ()
 
 type alias GeneratingInitialCountryModel =
-    { mapTexture : Maybe Texture
-    , windowWidth : Maybe Float
-    , windowHeight : Maybe Float
+    { windowWidth : Maybe Int
+    , windowHeight : Maybe Int
     , pageVisibility : Browser.Events.Visibility
     }
 
-type alias LoadingInitialTexturesModel =
-    { mapTexture : Maybe Texture
-    , highlightTexture : Maybe Texture
-    , windowWidth : Maybe Float
-    , windowHeight : Maybe Float
+type alias FinishingInitializationModel =
+    { windowWidth : Maybe Int
+    , windowHeight : Maybe Int
     , pageVisibility : Browser.Events.Visibility
     , countries : Countries
     , country : Country
+    , jsInitialized : Bool
     }
 
 type alias InitializedModel a =
     { a
-    | mapTexture : Texture
-    , highlightTexture : Texture
-    , windowWidth : Float
-    , windowHeight : Float
+    | windowWidth : Int
+    , windowHeight : Int
     , pageVisibility : Browser.Events.Visibility
     , countries : Countries
     , countryName : String
@@ -64,34 +58,30 @@ type alias DisplayResultsModel = SubmittedModel {}
 type alias GeneratingNewCountryModel = SubmittedModel
     { continuedUsingEnterKey : Bool }
 
-type alias LoadingNewHighlightModel = SubmittedModel
+type alias WaitingForJsLoadNewCountryModel = SubmittedModel
     { continuedUsingEnterKey : Bool
     , newCountry : Country
     }
 
 type Model
     = GeneratingInitialCountryState GeneratingInitialCountryModel
-    | LoadingInitialTexturesState LoadingInitialTexturesModel
+    | FinishingInitializationState FinishingInitializationModel
     | AnsweringState AnsweringModel
     | DisplayResultsState DisplayResultsModel
     | GeneratingNewCountryState GeneratingNewCountryModel
-    | LoadingNewHighlightState LoadingNewHighlightModel
+    | WaitingForJsLoadNewCountryState WaitingForJsLoadNewCountryModel
     | ErrorState
 
 type Msg
-    = GotMapTexture Texture
-    | LoadMapTextureError
-    | GotHighlightTextureUrl String
-    | GotHighlightTexture Texture
-    | LoadHighlightTextureError
-    | GotCountries (Country, Countries)
+    = GotCountries (Country, Countries)
     | GenerateCountryError -- this should never actually happen
+    | JsReady
     | AnswerUpdated String
     | EnterKeyPressed
     | NextCountryButtonClicked
     | AnswerFieldFocused
-    | AnswerFieldFocusError
-    | GotWindowDimensions Float Float
+    | AnswerFieldFocusError -- this should never actually happen
+    | GotWindowDimensions Int Int
     | PageVisibilityChange Browser.Events.Visibility
     | AnimationFrame Float
 
@@ -114,9 +104,15 @@ type alias Dot =
     , radius : Float
     }
 
+type alias WindowDimensions = { width : Int, height : Int }
+
+port sendMesh : Encode.Value -> Cmd msg
 port fillCountryByCode : String -> Cmd msg
 port drawDots : List Dot -> Cmd msg
-port highlightTextureUrl : (String -> msg) -> Sub msg
+port sendWindowDimensionsInitializing : WindowDimensions -> Cmd msg
+port sendWindowDimensionsInitialized : WindowDimensions -> Cmd msg
+port sendUniforms : Encode.Value -> Cmd msg
+port jsReadySignal : (() -> msg) -> Sub msg
 
 fillCountry : Country -> Cmd msg
 fillCountry { code } = fillCountryByCode code
@@ -167,40 +163,6 @@ highlightCountry country = case country.highlightMethod of
         |> drawDots
 
 {- ---
- - texture loading
- - ---
- -}
-
-loadTextureOptions : Texture.Options
-loadTextureOptions =
-    let
-        defaultOptions = Texture.defaultOptions
-    in
-    -- can't use mipmap for minify since texture extremely distorted near poles
-    { defaultOptions | minify = Texture.nearest, flipY = False }
-
-loadTexture : String -> Task Texture.Error Texture
-loadTexture = Texture.loadWith loadTextureOptions
-
-loadMapTextureResult : Result Texture.Error Texture -> Msg
-loadMapTextureResult result = case result of
-    Ok texture -> GotMapTexture texture
-    Err _ -> LoadMapTextureError
-
-loadMapTexture : String -> Cmd Msg
-loadMapTexture url = loadTexture url
-    |> Task.attempt loadMapTextureResult
-
-loadHighlightTextureResult : Result Texture.Error Texture -> Msg
-loadHighlightTextureResult result = case result of
-    Ok texture -> GotHighlightTexture texture
-    Err _ -> LoadHighlightTextureError
-
-loadHighlightTexture : String -> Cmd Msg
-loadHighlightTexture url = loadTexture url
-    |> Task.attempt loadHighlightTextureResult
-
-{- ---
  - misc utilities
  - ---
  -}
@@ -232,23 +194,23 @@ enterKeyDecoder =
  -}
 
 gotViewport : Dom.Viewport -> Msg
-gotViewport { viewport } = GotWindowDimensions viewport.width viewport.height
+gotViewport { viewport } =
+    GotWindowDimensions (round viewport.width) (round viewport.height)
 
 getWindowDimensions : Cmd Msg
 getWindowDimensions = Task.perform gotViewport Dom.getViewport
 
 init : Flags -> (Model, Cmd Msg)
-init mapTextureUrl =
+init () =
     ( GeneratingInitialCountryState
-        { mapTexture = Nothing
-        , windowWidth = Nothing
+        { windowWidth = Nothing
         , windowHeight = Nothing
         -- this is a guess, but no significant harm when we are wrong
         , pageVisibility = Browser.Events.Visible
         }
     , Cmd.batch
-        [ loadMapTexture mapTextureUrl
-        , getWindowDimensions
+        [ getWindowDimensions
+        , sendMesh meshJson
         , Random.generate generateCountryResult (Countries.next Countries.init)
         ]
     )
@@ -268,37 +230,39 @@ animationConfig wrap =
     , velocityTolerance = 1e-3
     }
 
-tryFinishInitialization : LoadingInitialTexturesModel -> Model
-tryFinishInitialization loadingModel =
-    -- need nested tuples since elm does not have tuples with more than 3
-    -- elements
-    case ((loadingModel.mapTexture, loadingModel.highlightTexture),
-            (loadingModel.windowWidth, loadingModel.windowHeight)) of
-        ((Just mapTexture, Just highlightTexture),
-                (Just windowWidth, Just windowHeight)) ->
+render : InitializedModel a -> Cmd msg
+render model = uniforms model |> encodeUniforms |> sendUniforms
+
+tryFinishInitialization : FinishingInitializationModel -> (Model, Cmd Msg)
+tryFinishInitialization finishingModel =
+    case (finishingModel.windowWidth, finishingModel.windowHeight,
+            finishingModel.jsInitialized) of
+        (Just windowWidth, Just windowHeight, True) ->
             let
-                { pageVisibility, countries, country } = loadingModel
-            in AnsweringState
-                { mapTexture = mapTexture
-                , highlightTexture = highlightTexture
-                , windowWidth = windowWidth
-                , windowHeight = windowHeight
-                , pageVisibility = pageVisibility
-                , countries = countries
-                , countryName = country.name
-                , cameraDistance = Animate.with
-                    (animationConfig Animate.noWrap)
-                    (countryCameraDistance country)
-                , cameraLatitude = Animate.with
-                    (animationConfig Animate.noWrap)
-                    country.latitude
-                , cameraLongitude = Animate.with
-                    (animationConfig <| Animate.wrap -180 180)
-                    country.longitude
-                , countryAlternativeNames = country.alternativeNames
-                , answer = ""
-                }
-        _ -> LoadingInitialTexturesState loadingModel
+                { pageVisibility, countries, country } = finishingModel
+                answeringModel =
+                    { windowWidth = windowWidth
+                    , windowHeight = windowHeight
+                    , pageVisibility = pageVisibility
+                    , countries = countries
+                    , countryName = country.name
+                    , cameraDistance = Animate.with
+                        (animationConfig Animate.noWrap)
+                        (countryCameraDistance country)
+                    , cameraLatitude = Animate.with
+                        (animationConfig Animate.noWrap)
+                        country.latitude
+                    , cameraLongitude = Animate.with
+                        (animationConfig <| Animate.wrap -180 180)
+                        country.longitude
+                    , countryAlternativeNames = country.alternativeNames
+                    , answer = ""
+                    }
+            in
+            ( AnsweringState answeringModel
+            , render answeringModel
+            )
+        _ -> ( FinishingInitializationState finishingModel, Cmd.none )
 
 checkAnswer : AnsweringModel -> Bool
 checkAnswer { countryName, countryAlternativeNames, answer } =
@@ -328,109 +292,72 @@ updateAnimation delta model =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model = case model of
     GeneratingInitialCountryState generatingModel -> case msg of
-        GotMapTexture texture ->
-            ( GeneratingInitialCountryState
-                { generatingModel | mapTexture = Just texture }
-            , Cmd.none
-            )
-        LoadMapTextureError -> (ErrorState, Cmd.none)
-        GotHighlightTextureUrl _ -> (ErrorState, Cmd.none)
-        GotHighlightTexture _ -> (ErrorState, Cmd.none)
-        LoadHighlightTextureError -> (ErrorState, Cmd.none)
         GotCountries (country, countries) ->
             let
-                { mapTexture, windowWidth, windowHeight, pageVisibility } =
-                    generatingModel
+                { windowWidth, windowHeight, pageVisibility } = generatingModel
             in
-            ( LoadingInitialTexturesState
-                { mapTexture = mapTexture
-                , highlightTexture = Nothing
-                , windowWidth = windowWidth
+            ( FinishingInitializationState
+                { windowWidth = windowWidth
                 , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
                 , country = country
+                , jsInitialized = False
                 }
             , highlightCountry country
             )
-        GenerateCountryError -> (ErrorState, Cmd.none)
-        AnswerUpdated _ -> (ErrorState, Cmd.none)
-        EnterKeyPressed -> (ErrorState, Cmd.none)
-        NextCountryButtonClicked -> (ErrorState, Cmd.none)
-        AnswerFieldFocused -> (ErrorState, Cmd.none)
-        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
             ( GeneratingInitialCountryState
                 { generatingModel
                 | windowWidth = Just width
                 , windowHeight = Just height
                 }
-            , Cmd.none
+            , sendWindowDimensionsInitializing
+                { width = width, height = height }
             )
         PageVisibilityChange visibility ->
             ( GeneratingInitialCountryState
                 { generatingModel | pageVisibility = visibility }
             , Cmd.none
             )
-        AnimationFrame _ -> (ErrorState, Cmd.none)
-    LoadingInitialTexturesState loadingModel -> case msg of
-        GotMapTexture texture ->
-            ( tryFinishInitialization
-                { loadingModel | mapTexture = Just texture }
-            , Cmd.none
-            )
-        LoadMapTextureError -> (ErrorState, Cmd.none)
-        GotHighlightTextureUrl url -> (model, loadHighlightTexture url)
-        GotHighlightTexture texture ->
-            ( tryFinishInitialization
-                { loadingModel | highlightTexture = Just texture }
-            , Cmd.none
-            )
-        LoadHighlightTextureError -> (ErrorState, Cmd.none)
-        GotCountries _ -> (ErrorState, Cmd.none)
-        GenerateCountryError -> (ErrorState, Cmd.none)
-        AnswerUpdated _ -> (ErrorState, Cmd.none)
-        EnterKeyPressed -> (ErrorState, Cmd.none)
-        NextCountryButtonClicked -> (ErrorState, Cmd.none)
-        AnswerFieldFocused -> (ErrorState, Cmd.none)
-        AnswerFieldFocusError -> (ErrorState, Cmd.none)
+        _ -> (ErrorState, Cmd.none)
+    FinishingInitializationState finishingModel -> case msg of
+        JsReady ->
+            tryFinishInitialization { finishingModel | jsInitialized = True }
         GotWindowDimensions width height ->
-            ( tryFinishInitialization
-                { loadingModel
-                | windowWidth = Just width
-                , windowHeight = Just height
-                }
-            , Cmd.none
+            let
+                (newModel, cmd) = tryFinishInitialization
+                    { finishingModel
+                    | windowWidth = Just width
+                    , windowHeight = Just height
+                    }
+            in
+            ( newModel
+            , Cmd.batch
+                [ cmd
+                , sendWindowDimensionsInitializing
+                    { width = width, height = height }
+                ]
             )
         PageVisibilityChange visibility ->
-            ( LoadingInitialTexturesState
-                { loadingModel | pageVisibility = visibility }
+            ( FinishingInitializationState
+                { finishingModel | pageVisibility = visibility }
             , Cmd.none
             )
-        AnimationFrame _ -> (ErrorState, Cmd.none)
+        _ -> (ErrorState, Cmd.none)
     AnsweringState answeringModel -> case msg of
-        GotMapTexture _ -> (ErrorState, Cmd.none)
-        LoadMapTextureError -> (ErrorState, Cmd.none)
-        GotHighlightTextureUrl _ -> (ErrorState, Cmd.none)
-        GotHighlightTexture _ -> (ErrorState, Cmd.none)
-        LoadHighlightTextureError -> (ErrorState, Cmd.none)
-        GotCountries _ -> (ErrorState, Cmd.none)
-        GenerateCountryError -> (ErrorState, Cmd.none)
         AnswerUpdated newAnswer ->
             ( AnsweringState { answeringModel | answer = newAnswer }
             , Cmd.none
             )
         EnterKeyPressed ->
             let
-                { mapTexture, highlightTexture, windowWidth, windowHeight,
-                        pageVisibility, countries, countryName, answer,
-                        cameraDistance, cameraLatitude, cameraLongitude } =
-                    answeringModel
+                { windowWidth, windowHeight, pageVisibility, countries,
+                    countryName, answer, cameraDistance, cameraLatitude,
+                    cameraLongitude } = answeringModel
             in
             ( DisplayResultsState
-                { mapTexture = mapTexture
-                , highlightTexture = highlightTexture
-                , windowWidth = windowWidth
+                { windowWidth = windowWidth
                 , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
@@ -443,42 +370,43 @@ update msg model = case model of
                 }
             , Cmd.none
             )
-        NextCountryButtonClicked -> (ErrorState, Cmd.none)
         AnswerFieldFocused -> ( AnsweringState answeringModel, Cmd.none )
-        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
-            ( AnsweringState
-                { answeringModel | windowWidth = width, windowHeight = height }
-            , Cmd.none
+            let
+                newAnsweringModel =
+                    { answeringModel
+                    | windowWidth = width
+                    , windowHeight = height
+                    }
+            in
+            ( AnsweringState newAnsweringModel
+            , Cmd.batch
+                [ sendWindowDimensionsInitialized
+                    { width = width, height = height }
+                , render newAnsweringModel
+                ]
             )
         PageVisibilityChange visibility ->
             ( AnsweringState { answeringModel | pageVisibility = visibility }
             , Cmd.none
             )
         AnimationFrame delta ->
-            ( AnsweringState (updateAnimation delta answeringModel)
-            , Cmd.none
+            let
+                newAnsweringModel = updateAnimation delta answeringModel
+            in
+            ( AnsweringState newAnsweringModel
+            , render newAnsweringModel
             )
+        _ -> (ErrorState, Cmd.none)
     DisplayResultsState resultsModel -> case msg of
-        GotMapTexture _ -> (ErrorState, Cmd.none)
-        LoadMapTextureError -> (ErrorState, Cmd.none)
-        GotHighlightTextureUrl _ -> (ErrorState, Cmd.none)
-        GotHighlightTexture _ -> (ErrorState, Cmd.none)
-        LoadHighlightTextureError -> (ErrorState, Cmd.none)
-        GotCountries _ -> (ErrorState, Cmd.none)
-        GenerateCountryError -> (ErrorState, Cmd.none)
-        AnswerUpdated _ -> (ErrorState, Cmd.none)
         EnterKeyPressed ->
             let
-                { mapTexture, highlightTexture, windowWidth, windowHeight,
-                    pageVisibility, countries, countryName, answer,
-                    cameraDistance, cameraLatitude, cameraLongitude,
-                    correct } = resultsModel
+                { windowWidth, windowHeight, pageVisibility, countries,
+                    countryName, answer, cameraDistance, cameraLatitude,
+                    cameraLongitude, correct } = resultsModel
             in
             ( GeneratingNewCountryState
-                { mapTexture = mapTexture
-                , highlightTexture = highlightTexture
-                , windowWidth = windowWidth
+                { windowWidth = windowWidth
                 , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
@@ -494,15 +422,12 @@ update msg model = case model of
             )
         NextCountryButtonClicked ->
             let
-                { mapTexture, highlightTexture, windowWidth, windowHeight,
-                    pageVisibility, countries, countryName, answer,
-                    cameraDistance, cameraLatitude, cameraLongitude,
-                    correct } = resultsModel
+                { windowWidth, windowHeight, pageVisibility, countries,
+                    countryName, answer, cameraDistance, cameraLatitude,
+                    cameraLongitude, correct } = resultsModel
             in
             ( GeneratingNewCountryState
-                { mapTexture = mapTexture
-                , highlightTexture = highlightTexture
-                , windowWidth = windowWidth
+                { windowWidth = windowWidth
                 , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
@@ -517,11 +442,20 @@ update msg model = case model of
             , Random.generate generateCountryResult (Countries.next countries)
             )
         AnswerFieldFocused -> ( DisplayResultsState resultsModel, Cmd.none )
-        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
-            ( DisplayResultsState
-                { resultsModel | windowWidth = width, windowHeight = height }
-            , Cmd.none
+            let
+                newResultsModel =
+                    { resultsModel
+                    | windowWidth = width
+                    , windowHeight = height
+                    }
+            in
+            ( DisplayResultsState newResultsModel
+            , Cmd.batch
+                [ sendWindowDimensionsInitialized
+                    { width = width, height = height }
+                , render newResultsModel
+                ]
             )
         PageVisibilityChange visibility ->
             ( DisplayResultsState
@@ -529,26 +463,22 @@ update msg model = case model of
             , Cmd.none
             )
         AnimationFrame delta ->
-            ( DisplayResultsState (updateAnimation delta resultsModel)
-            , Cmd.none
+            let
+                newResultsModel = updateAnimation delta resultsModel
+            in
+            ( DisplayResultsState newResultsModel
+            , render newResultsModel
             )
+        _ -> (ErrorState, Cmd.none)
     GeneratingNewCountryState generatingModel -> case msg of
-        GotMapTexture _ -> (ErrorState, Cmd.none)
-        LoadMapTextureError -> (ErrorState, Cmd.none)
-        GotHighlightTextureUrl _ -> (ErrorState, Cmd.none)
-        GotHighlightTexture _ -> (ErrorState, Cmd.none)
-        LoadHighlightTextureError -> (ErrorState, Cmd.none)
         GotCountries (country, countries) ->
             let
-                { mapTexture, highlightTexture, windowWidth, windowHeight,
-                    pageVisibility, countryName, answer, cameraDistance,
-                    cameraLatitude, cameraLongitude, correct,
-                    continuedUsingEnterKey } = generatingModel
+                { windowWidth, windowHeight, pageVisibility, countryName,
+                    answer, cameraDistance, cameraLatitude, cameraLongitude,
+                    correct, continuedUsingEnterKey } = generatingModel
             in
-            ( LoadingNewHighlightState
-                { mapTexture = mapTexture
-                , highlightTexture = highlightTexture
-                , windowWidth = windowWidth
+            ( WaitingForJsLoadNewCountryState
+                { windowWidth = windowWidth
                 , windowHeight = windowHeight
                 , pageVisibility = pageVisibility
                 , countries = countries
@@ -563,20 +493,22 @@ update msg model = case model of
                 }
             , highlightCountry country
             )
-        GenerateCountryError -> (ErrorState, Cmd.none)
-        AnswerUpdated _ -> (ErrorState, Cmd.none)
-        EnterKeyPressed -> (ErrorState, Cmd.none)
-        NextCountryButtonClicked -> (ErrorState, Cmd.none)
         AnswerFieldFocused ->
             ( GeneratingNewCountryState generatingModel, Cmd.none )
-        AnswerFieldFocusError -> (ErrorState, Cmd.none)
         GotWindowDimensions width height ->
-            ( GeneratingNewCountryState
-                { generatingModel
-                | windowWidth = width
-                , windowHeight = height
-                }
-            , Cmd.none
+            let
+                newGeneratingModel =
+                    { generatingModel
+                    | windowWidth = width
+                    , windowHeight = height
+                    }
+            in
+            ( GeneratingNewCountryState newGeneratingModel
+            , Cmd.batch
+                [ sendWindowDimensionsInitialized
+                    { width = width, height = height }
+                , render newGeneratingModel
+                ]
             )
         PageVisibilityChange visibility ->
             ( GeneratingNewCountryState
@@ -584,65 +516,75 @@ update msg model = case model of
             , Cmd.none
             )
         AnimationFrame delta ->
-            ( GeneratingNewCountryState (updateAnimation delta generatingModel)
-            , Cmd.none
-            )
-    LoadingNewHighlightState loadingModel -> case msg of
-        GotMapTexture _ -> (ErrorState, Cmd.none)
-        LoadMapTextureError -> (ErrorState, Cmd.none)
-        GotHighlightTextureUrl url -> (model, loadHighlightTexture url)
-        GotHighlightTexture highlightTexture ->
             let
-                { mapTexture, cameraDistance, windowWidth, windowHeight,
-                    pageVisibility, countries, cameraLatitude, cameraLongitude,
-                    continuedUsingEnterKey, newCountry } = loadingModel
+                newGeneratingModel = updateAnimation delta generatingModel
             in
-            ( AnsweringState
-                { mapTexture = mapTexture
-                , highlightTexture = highlightTexture
-                , windowWidth = windowWidth
-                , windowHeight = windowHeight
-                , pageVisibility = pageVisibility
-                , countries = countries
-                , countryName = newCountry.name
-                , answer = ""
-                , cameraDistance = Animate.to
-                    (countryCameraDistance newCountry)
-                    cameraDistance
-                , cameraLatitude =
-                    Animate.to newCountry.latitude cameraLatitude
-                , cameraLongitude =
-                    Animate.to newCountry.longitude cameraLongitude
-                , countryAlternativeNames = newCountry.alternativeNames
-                }
-            , case continuedUsingEnterKey of
-                True -> Dom.focus "answer"
-                    |> Task.attempt answerFieldFocusResult
-                False -> Cmd.none
+            ( GeneratingNewCountryState newGeneratingModel
+            , render newGeneratingModel
             )
-        LoadHighlightTextureError -> (ErrorState, Cmd.none)
-        GotCountries _ -> (ErrorState, Cmd.none)
-        GenerateCountryError -> (ErrorState, Cmd.none)
-        AnswerUpdated _ -> (ErrorState, Cmd.none)
-        EnterKeyPressed -> (ErrorState, Cmd.none)
-        NextCountryButtonClicked -> (ErrorState, Cmd.none)
+        _ -> (ErrorState, Cmd.none)
+    WaitingForJsLoadNewCountryState waitingModel -> case msg of
+        JsReady ->
+            let
+                { windowWidth, windowHeight, pageVisibility, countries,
+                    answer, cameraDistance, cameraLatitude, cameraLongitude,
+                    continuedUsingEnterKey, newCountry } = waitingModel
+                answeringModel =
+                    { windowWidth = windowWidth
+                    , windowHeight = windowHeight
+                    , pageVisibility = pageVisibility
+                    , countries = countries
+                    , countryName = newCountry.name
+                    , answer = ""
+                    , cameraDistance = Animate.to
+                        (countryCameraDistance newCountry)
+                        cameraDistance
+                    , cameraLatitude =
+                        Animate.to newCountry.latitude cameraLatitude
+                    , cameraLongitude =
+                        Animate.to newCountry.longitude cameraLongitude
+                    , countryAlternativeNames = newCountry.alternativeNames
+                    }
+            in
+            ( AnsweringState answeringModel
+            , Cmd.batch
+                [ render answeringModel
+                , case continuedUsingEnterKey of
+                    True -> Dom.focus "answer"
+                        |> Task.attempt answerFieldFocusResult
+                    False -> Cmd.none
+                ]
+            )
         AnswerFieldFocused ->
-            ( LoadingNewHighlightState loadingModel, Cmd.none )
-        AnswerFieldFocusError -> (ErrorState, Cmd.none)
+            ( WaitingForJsLoadNewCountryState waitingModel, Cmd.none )
         GotWindowDimensions width height ->
-            ( LoadingNewHighlightState
-                { loadingModel | windowWidth = width, windowHeight = height }
-            , Cmd.none
+            let
+                newWaitingModel =
+                    { waitingModel
+                    | windowWidth = width
+                    , windowHeight = height
+                    }
+            in
+            ( WaitingForJsLoadNewCountryState newWaitingModel
+            , Cmd.batch
+                [ sendWindowDimensionsInitialized
+                    { width = width, height = height }
+                , render newWaitingModel
+                ]
             )
         PageVisibilityChange visibility ->
-            ( LoadingNewHighlightState
-                { loadingModel | pageVisibility = visibility }
+            ( WaitingForJsLoadNewCountryState
+                { waitingModel | pageVisibility = visibility }
             , Cmd.none
             )
         AnimationFrame delta ->
-            ( LoadingNewHighlightState (updateAnimation delta loadingModel)
-            , Cmd.none
+            let
+                newWaitingModel = updateAnimation delta waitingModel
+            in
+            ( WaitingForJsLoadNewCountryState newWaitingModel
+            , render newWaitingModel
             )
+        _ -> (ErrorState, Cmd.none)
     ErrorState -> (ErrorState, Cmd.none)
 
 {- ---
@@ -650,9 +592,8 @@ update msg model = case model of
  - ---
  -}
 
-windowResized : Int -> Int -> Msg
-windowResized width height =
-    GotWindowDimensions (toFloat width) (toFloat height)
+jsReady : () -> Msg
+jsReady () = JsReady
 
 animationSubscriptions : InitializedModel a -> Sub Msg
 animationSubscriptions { pageVisibility, cameraDistance, cameraLatitude,
@@ -668,40 +609,107 @@ animationSubscriptions { pageVisibility, cameraDistance, cameraLatitude,
 subscriptions : Model -> Sub Msg
 subscriptions model = case model of
     GeneratingInitialCountryState _ -> Sub.batch
-        [ Browser.Events.onResize windowResized
+        [ Browser.Events.onResize GotWindowDimensions
         , Browser.Events.onVisibilityChange PageVisibilityChange
         ]
-    LoadingInitialTexturesState _ -> Sub.batch
-        [ highlightTextureUrl GotHighlightTextureUrl
-        , Browser.Events.onResize windowResized
+    FinishingInitializationState _ -> Sub.batch
+        [ Browser.Events.onResize GotWindowDimensions
         , Browser.Events.onVisibilityChange PageVisibilityChange
+        , jsReadySignal jsReady
         ]
     AnsweringState answeringModel -> Sub.batch
-        [ Browser.Events.onResize windowResized
+        [ Browser.Events.onResize GotWindowDimensions
         , Browser.Events.onVisibilityChange PageVisibilityChange
         , animationSubscriptions answeringModel
         ]
     DisplayResultsState resultsModel -> Sub.batch
-        [ Browser.Events.onResize windowResized
+        [ Browser.Events.onResize GotWindowDimensions
         , Browser.Events.onVisibilityChange PageVisibilityChange
         , Browser.Events.onKeyUp enterKeyDecoder
         , animationSubscriptions resultsModel
         ]
     GeneratingNewCountryState generatingModel -> Sub.batch
-        [ Browser.Events.onResize windowResized
+        [ Browser.Events.onResize GotWindowDimensions
         , Browser.Events.onVisibilityChange PageVisibilityChange
         , animationSubscriptions generatingModel
         ]
-    LoadingNewHighlightState loadingModel -> Sub.batch
-        [ highlightTextureUrl GotHighlightTextureUrl
-        , Browser.Events.onResize windowResized
+    WaitingForJsLoadNewCountryState waitingModel -> Sub.batch
+        [ Browser.Events.onResize GotWindowDimensions
         , Browser.Events.onVisibilityChange PageVisibilityChange
-        , animationSubscriptions loadingModel
+        , jsReadySignal jsReady
+        , animationSubscriptions waitingModel
         ]
     ErrorState -> Sub.none
 
 {- ---
  - view
+ - ---
+ -}
+
+viewUiContainer : List (Html msg) -> Html msg
+viewUiContainer = Html.div [ Attrs.id "ui-container" ]
+
+viewAnswering : AnsweringModel -> List (Html Msg)
+viewAnswering { answer } =
+    let
+        decoder = Decode.map (\msg -> (msg, True)) enterKeyDecoder
+    in
+    [ Html.div [ Attrs.class "heading" ] [ Html.text "What country is this?" ]
+    , Html.input
+        [ Attrs.id "answer"
+        , Attrs.placeholder "Answer"
+        , Attrs.value answer
+        , Html.Events.onInput AnswerUpdated
+        , Html.Events.stopPropagationOn "keyup" decoder
+        ]
+        []
+    ]
+
+viewSubmitted : Bool -> SubmittedModel a -> List (Html Msg)
+viewSubmitted nextCountryButtonEnabled { countryName, answer, correct } =
+    let
+        heading = case correct of
+            True -> "Correct!"
+            False -> "Incorrect..."
+        incorrect = case correct of
+            True -> []
+            False ->
+                [ Html.div
+                    [ Attrs.id "incorrect" ]
+                    [ Html.text ("❌ " ++ answer) ]
+                ]
+    in
+    [ Html.div [ Attrs.class "heading" ] [ Html.text heading ]
+    , Html.div [ Attrs.id "incorrect-correct" ] <|
+        incorrect ++
+        [ Html.div
+            [ Attrs.id "correct" ]
+            [ Html.text ("✅ " ++ countryName) ]
+        ]
+    , Html.button
+        [ Attrs.id "continue"
+        , Attrs.disabled (not nextCountryButtonEnabled)
+        , Html.Events.onClick NextCountryButtonClicked
+        ]
+        [ Html.text "Continue" ]
+    ]
+
+view : Model -> Html Msg
+view model = case model of
+    GeneratingInitialCountryState _ -> Html.div [] []
+    FinishingInitializationState _ -> Html.div [] []
+    AnsweringState answeringModel ->
+        viewUiContainer (viewAnswering answeringModel)
+    DisplayResultsState resultsModel ->
+        viewUiContainer (viewSubmitted True resultsModel)
+    GeneratingNewCountryState generatingModel ->
+        viewUiContainer (viewSubmitted False generatingModel)
+    WaitingForJsLoadNewCountryState waitingModel ->
+        viewUiContainer (viewSubmitted False waitingModel)
+    ErrorState -> Html.div [] []
+
+{- ---
+ - mesh
  - ---
  -}
 
@@ -776,8 +784,8 @@ northTriangles = List.map (polarTriangle northPoleV northCircleV) uIntervals
 southTriangles : List Triangle
 southTriangles = List.map (polarTriangle southPoleV southCircleV) uIntervals
 
-triangles : List Triangle
-triangles = northTriangles ++ southTriangles
+polarTriangles : List Triangle
+polarTriangles = northTriangles ++ southTriangles
 
 type alias VInterval = (Float, Float)
 
@@ -807,15 +815,18 @@ quads = List.range 1 (numVSlices - 2)
 quadTriangles : Quad -> List Triangle
 quadTriangles { tl, tr, bl, br } = [(tl,tr,bl), (tr,bl,br)]
 
-mesh : Mesh Vertex
-mesh = triangles ++ List.concatMap quadTriangles quads |> WebGL.triangles
+mesh : List Triangle
+mesh = polarTriangles ++ List.concatMap quadTriangles quads
+
+{- ---
+ - uniforms
+ - ---
+ -}
 
 type alias Uniforms =
     { rotation : Mat4
     , camera : Mat4
     , perspective : Mat4
-    , mapTexture : Texture
-    , highlightTexture : Texture
     , ambientBrightness : Float
     , diffuseBrightness : Float
     , specularBrightness : Float
@@ -825,22 +836,17 @@ type alias Uniforms =
     , shininess : Float
     }
 
-type alias Varying =
-    { vTextureCoord : Vec2
-    , vPos : Vec3
-    }
-
 white : Vec3
 white = vec3 1 1 1
 
 uniforms : InitializedModel a -> Uniforms
-uniforms { mapTexture, highlightTexture, windowWidth, windowHeight,
-        cameraDistance, cameraLatitude, cameraLongitude } =
+uniforms { windowWidth, windowHeight, cameraDistance, cameraLatitude,
+        cameraLongitude } =
     let
         cameraPos = Vec3.scale
             (1 + Animate.get cameraDistance)
             (Vec3.negate Vec3.i)
-        aspectRatio = windowWidth / windowHeight
+        aspectRatio = toFloat windowWidth / toFloat windowHeight
     in
     { rotation =
         Mat4.makeRotate
@@ -851,8 +857,6 @@ uniforms { mapTexture, highlightTexture, windowWidth, windowHeight,
             Vec3.k
     , camera = Mat4.makeLookAt cameraPos (vec3 0 0 0) Vec3.k
     , perspective = Mat4.makePerspective 45 aspectRatio 0.01 100
-    , mapTexture = mapTexture
-    , highlightTexture = highlightTexture
     , ambientBrightness = 0.5
     , diffuseBrightness = 0.5
     , specularBrightness = 0.1
@@ -862,153 +866,59 @@ uniforms { mapTexture, highlightTexture, windowWidth, windowHeight,
     , shininess = 2
     }
 
-vertexShader : Shader Vertex Uniforms Varying
-vertexShader = [glsl|
-        attribute vec3 pos;
-        attribute vec2 textureCoords;
-        uniform mat4 rotation;
-        uniform mat4 camera;
-        uniform mat4 perspective;
-        varying vec2 vTextureCoord;
-        varying vec3 vPos;
-        void main() {
-            gl_Position = perspective * camera * rotation * vec4(pos, 1.0);
-            vTextureCoord = textureCoords;
-            vPos = mat3(rotation) * pos;
-        }
-    |]
+{- ---
+ - encoding
+ - ---
+ -}
 
-fragmentShader : Shader {} Uniforms Varying
-fragmentShader = [glsl|
-        precision lowp float;
-        uniform sampler2D mapTexture;
-        uniform sampler2D highlightTexture;
-        uniform float ambientBrightness;
-        uniform float diffuseBrightness;
-        uniform float specularBrightness;
-        uniform vec3 lightColor;
-        uniform vec3 lightDir;
-        uniform vec3 cameraPos;
-        uniform float shininess;
-        varying vec2 vTextureCoord;
-        varying vec3 vPos;
+vec2Components : Vec2 -> List Float
+vec2Components v = [ Vec2.getX v, Vec2.getY v ]
 
-        vec4 sampleTextures() {
-            vec4 mapColor = texture2D(mapTexture, vTextureCoord);
-            vec4 highlightColor = texture2D(highlightTexture, vTextureCoord);
-            float alpha = highlightColor.w
-                + mapColor.w * (1.0 - highlightColor.w);
-            vec3 rgb =
-                (highlightColor.xyz * highlightColor.w
-                    + mapColor.xyz * mapColor.w * (1.0 - highlightColor.w))
-                / alpha;
-            return vec4(rgb, alpha);
-        }
+vec3Components : Vec3 -> List Float
+vec3Components v = [ Vec3.getX v, Vec3.getY v, Vec3.getZ v ]
 
-        void main() {
-            vec3 ambient = ambientBrightness * lightColor;
-            // normal is same as position since unit sphere centered at origin
-            vec3 normal = vPos;
-            vec3 diffuse = diffuseBrightness
-                * max(dot(normal, lightDir), 0.0)
-                * lightColor;
-            vec3 cameraDir = normalize(cameraPos - vPos);
-            vec3 reflectDir = reflect(-lightDir, normal);
-            vec3 specular = specularBrightness
-                * pow(max(dot(cameraDir, reflectDir), 0.0), shininess)
-                * lightColor;
-            vec3 lighting = ambient + diffuse + specular;
-            vec4 objColor = sampleTextures();
-            gl_FragColor = vec4(lighting, 1.0) * objColor;
-        }
-    |]
+triangleVertices : Triangle -> List Vertex
+triangleVertices (v1,v2,v3) = [v1,v2,v3]
 
-viewGraphics : InitializedModel a -> Html msg
-viewGraphics model =
+meshJson : Encode.Value
+meshJson =
     let
-        width = round model.windowWidth
-        height = round model.windowHeight
-    in
-    WebGL.toHtml
-        [ Attrs.width (width * 2)
-        , Attrs.height (height * 2)
-        , Attrs.style "width" (String.fromInt width ++ "px")
-        , Attrs.style "height" (String.fromInt height ++ "px")
-        , Attrs.style "display" "block"
-        , Attrs.style "background-color" "#2e4482"
+        vertices = List.concatMap triangleVertices mesh
+        posArray = List.concatMap (.pos >> vec3Components) vertices
+        textureCoordsArray = vertices
+            |> List.concatMap (.textureCoords >> vec2Components)
+    in Encode.object
+        [ ("pos", Encode.list Encode.float posArray)
+        , ("textureCoords", Encode.list Encode.float textureCoordsArray)
+        , ("numVertices", List.length vertices |> Encode.int)
         ]
-        [ WebGL.entity vertexShader fragmentShader mesh (uniforms model) ]
 
-viewUiContainer : List (Html msg) -> Html msg
-viewUiContainer = Html.div [ Attrs.id "ui-container" ]
-
-viewAnswering : AnsweringModel -> List (Html Msg)
-viewAnswering { answer } =
+encodeMat4 : Mat4 -> Encode.Value
+encodeMat4 m =
     let
-        decoder = Decode.map (\msg -> (msg, True)) enterKeyDecoder
-    in
-    [ Html.div [ Attrs.class "heading" ] [ Html.text "What country is this?" ]
-    , Html.input
-        [ Attrs.id "answer"
-        , Attrs.placeholder "Answer"
-        , Attrs.value answer
-        , Html.Events.onInput AnswerUpdated
-        , Html.Events.stopPropagationOn "keyup" decoder
-        ]
-        []
-    ]
+        { m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43,
+            m14, m24, m34, m44 } = Mat4.toRecord m
+    in Encode.list Encode.float
+        -- column-major order used by webgl
+        [m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43,
+            m14, m24, m34, m44]
 
-viewSubmitted : Bool -> SubmittedModel a -> List (Html Msg)
-viewSubmitted nextCountryButtonEnabled { countryName, answer, correct } =
-    let
-        heading = case correct of
-            True -> "Correct!"
-            False -> "Incorrect..."
-        incorrect = case correct of
-            True -> []
-            False ->
-                [ Html.div
-                    [ Attrs.id "incorrect" ]
-                    [ Html.text ("❌ " ++ answer) ]
-                ]
-    in
-    [ Html.div [ Attrs.class "heading" ] [ Html.text heading ]
-    , Html.div [ Attrs.id "incorrect-correct" ] <|
-        incorrect ++
-        [ Html.div
-            [ Attrs.id "correct" ]
-            [ Html.text ("✅ " ++ countryName) ]
-        ]
-    , Html.button
-        [ Attrs.id "continue"
-        , Attrs.disabled (not nextCountryButtonEnabled)
-        , Html.Events.onClick NextCountryButtonClicked
-        ]
-        [ Html.text "Continue" ]
-    ]
+encodeVec3 : Vec3 -> Encode.Value
+encodeVec3 = vec3Components >> Encode.list Encode.float
 
-view : Model -> Html Msg
-view model = case model of
-    GeneratingInitialCountryState _ -> Html.div [] []
-    LoadingInitialTexturesState _ -> Html.div [] []
-    AnsweringState answeringModel -> Html.div
-        []
-        [ viewGraphics answeringModel
-        , viewUiContainer (viewAnswering answeringModel)
+encodeUniforms : Uniforms -> Encode.Value
+encodeUniforms { rotation, camera, perspective, ambientBrightness,
+        diffuseBrightness, specularBrightness, lightColor, lightDir,
+        cameraPos, shininess } =
+    Encode.object
+        [ ( "rotation", encodeMat4 rotation )
+        , ( "camera", encodeMat4 camera )
+        , ( "perspective", encodeMat4 perspective )
+        , ( "ambientBrightness", Encode.float ambientBrightness )
+        , ( "diffuseBrightness", Encode.float diffuseBrightness )
+        , ( "specularBrightness", Encode.float specularBrightness )
+        , ( "lightColor", encodeVec3 lightColor )
+        , ( "lightDir", encodeVec3 lightDir )
+        , ( "cameraPos", encodeVec3 cameraPos )
+        , ( "shininess", Encode.float shininess )
         ]
-    DisplayResultsState resultsModel -> Html.div
-        []
-        [ viewGraphics resultsModel
-        , viewUiContainer (viewSubmitted True resultsModel)
-        ]
-    GeneratingNewCountryState generatingModel -> Html.div
-        []
-        [ viewGraphics generatingModel
-        , viewUiContainer (viewSubmitted False generatingModel)
-        ]
-    LoadingNewHighlightState loadingModel -> Html.div
-        []
-        [ viewGraphics loadingModel
-        , viewUiContainer (viewSubmitted False loadingModel)
-        ]
-    ErrorState -> Html.div [] []
