@@ -21,6 +21,8 @@ const listeningForCorrect = new Promise(resolve => {
         });
         resolve();
     };
+    // needed on iphone safari
+    correctSound.load();
 });
 
 const listeningForWrong = new Promise(resolve => {
@@ -30,6 +32,8 @@ const listeningForWrong = new Promise(resolve => {
         });
         resolve();
     };
+    // needed on iphone safari
+    wrongSound.load();
 });
 
 
