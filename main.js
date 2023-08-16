@@ -11,8 +11,8 @@ const elm = Elm.Main.init({ node: document.getElementById("ui") });
  * ---
  */
 
-const correctSound = new Audio("correct.wav");
-const wrongSound = new Audio("wrong.mp3");
+const correctSound = new Audio("assets/correct.wav");
+const wrongSound = new Audio("assets/wrong.mp3");
 
 const listeningForCorrect = new Promise(resolve => {
     correctSound.oncanplaythrough = () => {
@@ -321,7 +321,7 @@ gl.uniform1i(mapTexture, 0);
 const highlightTexture = locateUniform(gl, shaderProgram, "highlightTexture");
 gl.uniform1i(highlightTexture, 1);
 
-const mapSvgLoaded = fetch("map.svg").then(response => response.text())
+const mapSvgLoaded = fetch("assets/map.svg").then(response => response.text())
         .then(text => {
     const map = new DOMParser().parseFromString(text, "text/xml")
         .documentElement;

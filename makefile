@@ -1,6 +1,6 @@
 .PHONY: all clean
 
-all: build/index.html build/main.js build/elm.js build/map.svg build/correct.wav build/wrong.mp3
+all: build/index.html build/main.js build/elm.js build/assets
 
 clean:
 	rm -rf build
@@ -14,14 +14,8 @@ build/main.js: build main.js
 build/elm.js: build src/Main.elm src/Animate.elm src/Countries.elm
 	elm make --optimize --output=build/elm.js src/Main.elm
 
-build/map.svg: build map.svg
-	cp map.svg build
-
-build/correct.wav: build correct.wav
-	cp correct.wav build
-
-build/wrong.mp3: build wrong.mp3
-	cp wrong.mp3 build
+build/assets: build assets
+	cp -r assets build
 
 build:
 	mkdir build
