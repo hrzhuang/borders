@@ -306,15 +306,12 @@ const loadTexture = (gl, image) => {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 };
 
-const map = document.getElementById("map");
 const highlight = document.getElementById("highlight");
 const highlightContainer = document.getElementById("highlight-container");
 
 const svgWidth = 8192;
 const svgHeight = 4096;
 
-map.setAttribute("width", svgWidth);
-map.setAttribute("height", svgHeight);
 highlight.setAttribute("width", svgWidth);
 highlight.setAttribute("height", svgHeight);
 
@@ -324,7 +321,16 @@ gl.uniform1i(mapTexture, 0);
 const highlightTexture = locateUniform(gl, shaderProgram, "highlightTexture");
 gl.uniform1i(highlightTexture, 1);
 
-const mapTextureLoaded = loadSvgImage(map).then(mapImage => {
+const mapSvgLoaded = fetch("map.svg").then(response => response.text())
+        .then(text => {
+    const map = new DOMParser().parseFromString(text, "text/xml")
+        .documentElement;
+    map.setAttribute("width", svgWidth);
+    map.setAttribute("height", svgHeight);
+    return map;
+});
+
+const mapTextureLoaded = mapSvgLoaded.then(loadSvgImage).then(mapImage => {
     gl.activeTexture(gl.TEXTURE0);
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -353,10 +359,13 @@ const updateHighlightTexture = () => {
 };
 
 elm.ports.fillCountryByCode.subscribe(countryCode => {
-    const filledCountry = document.getElementById(countryCode).cloneNode(true);
-    filledCountry.removeAttribute("id");
-    highlightContainer.replaceChildren(filledCountry);
-    updateHighlightTexture();
+    mapSvgLoaded.then(map => {
+        const filledCountry = map.querySelector("#" + countryCode)
+            .cloneNode(true);
+        filledCountry.removeAttribute("id");
+        highlightContainer.replaceChildren(filledCountry);
+        updateHighlightTexture();
+    });
 });
 
 // doesn't work if coords are too close to the poles, but luckily no
