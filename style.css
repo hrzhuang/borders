@@ -1,7 +1,6 @@
-@font-face  {
+@font-face {
   font-family: "Nunito";
   src: url("assets/nunito-regular.woff") format("woff");
-  font-weight: normal;
 }
 
 body {
