@@ -104,17 +104,18 @@ type alias Dot =
     , radius : Float
     }
 
-type alias WindowDimensions = { width : Int, height : Int }
-
 port sendMesh : Encode.Value -> Cmd msg
 port fillCountryByCode : String -> Cmd msg
 port drawDots : List Dot -> Cmd msg
-port sendWindowDimensionsInitializing : WindowDimensions -> Cmd msg
-port sendWindowDimensionsInitialized : WindowDimensions -> Cmd msg
-port sendUniforms : Encode.Value -> Cmd msg
+port sendRenderUpdate : Encode.Value -> Cmd msg
 port sendCorrect : () -> Cmd msg
 port sendWrong : () -> Cmd msg
 port jsReadySignal : (() -> msg) -> Sub msg
+
+{- ---
+ - highlighting
+ - ---
+ -}
 
 fillCountry : Country -> Cmd msg
 fillCountry { code } = fillCountryByCode code
@@ -163,6 +164,32 @@ highlightCountry country = case country.highlightMethod of
     Countries.Dot -> countryDot country |> List.singleton |> drawDots
     Countries.SmallDots coords -> List.map (smallDot country.scale) coords
         |> drawDots
+
+{- ---
+ - sending render updates to javascript
+ - ---
+ -}
+
+sendUniforms : InitializedModel a -> Cmd msg
+sendUniforms model =
+    Encode.object [ ( "uniforms", uniforms model |> encodeUniforms ) ]
+        |> sendRenderUpdate
+
+sendWindowDimensionsAndUniforms : InitializedModel a -> Cmd msg
+sendWindowDimensionsAndUniforms model =
+    let
+        { windowWidth, windowHeight } = model
+    in
+    Encode.object
+            [ ( "windowDimensions"
+              , Encode.object
+                    [ ("width", Encode.int windowWidth)
+                    , ("height", Encode.int windowHeight)
+                    ]
+              )
+            , ( "uniforms", uniforms model |> encodeUniforms )
+            ]
+        |> sendRenderUpdate
 
 {- ---
  - misc utilities
@@ -232,9 +259,6 @@ animationConfig wrap =
     , velocityTolerance = 1e-3
     }
 
-render : InitializedModel a -> Cmd msg
-render model = uniforms model |> encodeUniforms |> sendUniforms
-
 tryFinishInitialization : FinishingInitializationModel -> (Model, Cmd Msg)
 tryFinishInitialization finishingModel =
     case (finishingModel.windowWidth, finishingModel.windowHeight,
@@ -262,7 +286,7 @@ tryFinishInitialization finishingModel =
                     }
             in
             ( AnsweringState answeringModel
-            , render answeringModel
+            , sendWindowDimensionsAndUniforms answeringModel
             )
         _ -> ( FinishingInitializationState finishingModel, Cmd.none )
 
@@ -314,8 +338,7 @@ update msg model = case model of
                 | windowWidth = Just width
                 , windowHeight = Just height
                 }
-            , sendWindowDimensionsInitializing
-                { width = width, height = height }
+            , Cmd.none
             )
         PageVisibilityChange visibility ->
             ( GeneratingInitialCountryState
@@ -327,20 +350,11 @@ update msg model = case model of
         JsReady ->
             tryFinishInitialization { finishingModel | jsInitialized = True }
         GotWindowDimensions width height ->
-            let
-                (newModel, cmd) = tryFinishInitialization
-                    { finishingModel
-                    | windowWidth = Just width
-                    , windowHeight = Just height
-                    }
-            in
-            ( newModel
-            , Cmd.batch
-                [ cmd
-                , sendWindowDimensionsInitializing
-                    { width = width, height = height }
-                ]
-            )
+            tryFinishInitialization
+                { finishingModel
+                | windowWidth = Just width
+                , windowHeight = Just height
+                }
         PageVisibilityChange visibility ->
             ( FinishingInitializationState
                 { finishingModel | pageVisibility = visibility }
@@ -385,11 +399,8 @@ update msg model = case model of
                     }
             in
             ( AnsweringState newAnsweringModel
-            , Cmd.batch
-                [ sendWindowDimensionsInitialized
-                    { width = width, height = height }
-                , render newAnsweringModel
-                ]
+            -- need to send uniforms as well since aspect ratio also changed
+            , sendWindowDimensionsAndUniforms newAnsweringModel
             )
         PageVisibilityChange visibility ->
             ( AnsweringState { answeringModel | pageVisibility = visibility }
@@ -400,7 +411,7 @@ update msg model = case model of
                 newAnsweringModel = updateAnimation delta answeringModel
             in
             ( AnsweringState newAnsweringModel
-            , render newAnsweringModel
+            , sendUniforms newAnsweringModel
             )
         _ -> (ErrorState, Cmd.none)
     DisplayResultsState resultsModel -> case msg of
@@ -456,11 +467,8 @@ update msg model = case model of
                     }
             in
             ( DisplayResultsState newResultsModel
-            , Cmd.batch
-                [ sendWindowDimensionsInitialized
-                    { width = width, height = height }
-                , render newResultsModel
-                ]
+            -- need to send uniforms as well since aspect ratio also changed
+            , sendWindowDimensionsAndUniforms newResultsModel
             )
         PageVisibilityChange visibility ->
             ( DisplayResultsState
@@ -472,7 +480,7 @@ update msg model = case model of
                 newResultsModel = updateAnimation delta resultsModel
             in
             ( DisplayResultsState newResultsModel
-            , render newResultsModel
+            , sendUniforms newResultsModel
             )
         _ -> (ErrorState, Cmd.none)
     GeneratingNewCountryState generatingModel -> case msg of
@@ -509,11 +517,8 @@ update msg model = case model of
                     }
             in
             ( GeneratingNewCountryState newGeneratingModel
-            , Cmd.batch
-                [ sendWindowDimensionsInitialized
-                    { width = width, height = height }
-                , render newGeneratingModel
-                ]
+            -- need to send uniforms as well since aspect ratio also changed
+            , sendWindowDimensionsAndUniforms newGeneratingModel
             )
         PageVisibilityChange visibility ->
             ( GeneratingNewCountryState
@@ -525,7 +530,7 @@ update msg model = case model of
                 newGeneratingModel = updateAnimation delta generatingModel
             in
             ( GeneratingNewCountryState newGeneratingModel
-            , render newGeneratingModel
+            , sendUniforms newGeneratingModel
             )
         _ -> (ErrorState, Cmd.none)
     WaitingForJsLoadNewCountryState waitingModel -> case msg of
@@ -553,7 +558,7 @@ update msg model = case model of
             in
             ( AnsweringState answeringModel
             , Cmd.batch
-                [ render answeringModel
+                [ sendUniforms answeringModel
                 , case continuedUsingEnterKey of
                     True -> Dom.focus "answer"
                         |> Task.attempt answerFieldFocusResult
@@ -571,11 +576,8 @@ update msg model = case model of
                     }
             in
             ( WaitingForJsLoadNewCountryState newWaitingModel
-            , Cmd.batch
-                [ sendWindowDimensionsInitialized
-                    { width = width, height = height }
-                , render newWaitingModel
-                ]
+            -- need to send uniforms as well since aspect ratio also changed
+            , sendWindowDimensionsAndUniforms newWaitingModel
             )
         PageVisibilityChange visibility ->
             ( WaitingForJsLoadNewCountryState
@@ -587,7 +589,7 @@ update msg model = case model of
                 newWaitingModel = updateAnimation delta waitingModel
             in
             ( WaitingForJsLoadNewCountryState newWaitingModel
-            , render newWaitingModel
+            , sendUniforms newWaitingModel
             )
         _ -> (ErrorState, Cmd.none)
     ErrorState -> (ErrorState, Cmd.none)
@@ -872,7 +874,7 @@ uniforms { windowWidth, windowHeight, cameraDistance, cameraLatitude,
     }
 
 {- ---
- - encoding
+ - mesh & uniforms encoding
  - ---
  -}
 

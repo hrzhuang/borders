@@ -187,18 +187,7 @@ const meshLoaded = meshReceived.then(mesh => {
 
 
 /* ---
- * helper for re-rendering
- * ---
- */
-
-const redraw = numVertices => {
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.drawArrays(gl.TRIANGLES, 0, numVertices);
-};
-
-
-/* ---
- * updating canvas to match window dimensions
+ * setting canvas dimensions
  * ---
  */
 
@@ -219,26 +208,9 @@ const setGlDimensions = (width, height) => {
     `;
 };
 
-const glCanvasInitialized = new Promise(resolve => {
-    elm.ports.sendWindowDimensionsInitializing.subscribe(
-            ({ width, height }) => {
-        setGlDimensions(width, height);
-        resolve();
-    });
-});
-
-const listeningForInitializedWindowDimensions = meshLoaded.then(
-        numVertices => {
-    elm.ports.sendWindowDimensionsInitialized.subscribe(
-            ({ width, height }) => {
-        setGlDimensions(width, height);
-        redraw(numVertices);
-    });
-});
-
 
 /* ---
- * helper for uniforms
+ * setting uniforms
  * ---
  */
 
@@ -249,12 +221,6 @@ const locateUniform = (gl, program, uniformName) => {
     }
     return uniform;
 };
-
-
-/* ---
- * re-rendering when we receive new uniforms
- * ---
- */
 
 const rotation = locateUniform(gl, shaderProgram, "rotation");
 const camera = locateUniform(gl, shaderProgram, "camera");
@@ -270,22 +236,41 @@ const lightDir = locateUniform(gl, shaderProgram, "lightDir");
 const cameraPos = locateUniform(gl, shaderProgram, "cameraPos");
 const shininess = locateUniform(gl, shaderProgram, "shininess");
 
-const listeningForUniforms = meshLoaded.then(numVertices => {
-    elm.ports.sendUniforms.subscribe(uniforms => {
-        gl.uniformMatrix4fv(rotation, false,
-            new Float32Array(uniforms.rotation));
-        gl.uniformMatrix4fv(camera, false, new Float32Array(uniforms.camera));
-        gl.uniformMatrix4fv(perspective, false,
-            new Float32Array(uniforms.perspective));
-        gl.uniform1f(ambientBrightness, uniforms.ambientBrightness);
-        gl.uniform1f(diffuseBrightness, uniforms.diffuseBrightness);
-        gl.uniform1f(specularBrightness, uniforms.specularBrightness);
-        gl.uniform3fv(lightColor, new Float32Array(uniforms.lightColor));
-        gl.uniform3fv(lightDir, new Float32Array(uniforms.lightDir));
-        gl.uniform3fv(cameraPos, new Float32Array(uniforms.cameraPos));
-        gl.uniform1f(shininess, uniforms.shininess);
+const setUniforms = uniforms => {
+    gl.uniformMatrix4fv(rotation, false, new Float32Array(uniforms.rotation));
+    gl.uniformMatrix4fv(camera, false, new Float32Array(uniforms.camera));
+    gl.uniformMatrix4fv(perspective, false,
+        new Float32Array(uniforms.perspective));
+    gl.uniform1f(ambientBrightness, uniforms.ambientBrightness);
+    gl.uniform1f(diffuseBrightness, uniforms.diffuseBrightness);
+    gl.uniform1f(specularBrightness, uniforms.specularBrightness);
+    gl.uniform3fv(lightColor, new Float32Array(uniforms.lightColor));
+    gl.uniform3fv(lightDir, new Float32Array(uniforms.lightDir));
+    gl.uniform3fv(cameraPos, new Float32Array(uniforms.cameraPos));
+    gl.uniform1f(shininess, uniforms.shininess);
+};
 
-        redraw(numVertices);
+
+/* ---
+ * re-rendering when we receive render update
+ * ---
+ */
+
+const listeningForRenderUpdate = meshLoaded.then(numVertices => {
+    elm.ports.sendRenderUpdate.subscribe(update => {
+        if (update.hasOwnProperty("windowDimensions")) {
+            // update canvas to match window dimensions
+            const { width, height } = update.windowDimensions;
+            setGlDimensions(width, height);
+        }
+
+        if (update.hasOwnProperty("uniforms")) {
+            setUniforms(update.uniforms);
+        }
+
+        // re-draw
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.drawArrays(gl.TRIANGLES, 0, numVertices);
     });
 });
 
@@ -360,9 +345,8 @@ const updateHighlightTexture = () => {
         loadTexture(gl, highlightImage);
     });
 
-    Promise.all([glCanvasInitialized, listeningForInitializedWindowDimensions,
-            listeningForUniforms, mapTextureLoaded,
-            highlightTextureLoaded, listeningForCorrect,
+    Promise.all([meshLoaded, mapTextureLoaded, highlightTextureLoaded,
+            listeningForRenderUpdate, listeningForCorrect,
             listeningForWrong]).then(() => {
         elm.ports.jsReadySignal.send(null);
     });
