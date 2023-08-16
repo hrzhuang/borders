@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Build
-        run: make
+        run: make version="$(git rev-parse HEAD)"
         shell: bash
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2

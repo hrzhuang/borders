@@ -1,0 +1,31 @@
+const version = "${version}";
+
+oninstall = event => {
+    event.waitUntil(caches.open(version).then(cache => {
+        return cache.addAll([
+            ".",
+            "index.html",
+            "style.css",
+            "main.js",
+            "elm.js",
+            "assets/map.svg",
+            "assets/nunito-regular.woff",
+            "assets/correct.wav",
+            "assets/wrong.mp3",
+        ]);
+    }));
+};
+
+onactivate = event => {
+    event.waitUntil(caches.keys().then(keys => {
+        const outdated = keys.filter(key => key !== version);
+        console.log(outdated);
+        return Promise.all(outdated.map(key => caches.delete(key)));
+    }));
+};
+
+onfetch = event => {
+    event.respondWith(caches.open(version).then(cache => {
+        return cache.match(event.request);
+    }));
+};
