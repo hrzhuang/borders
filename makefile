@@ -1,12 +1,15 @@
 .PHONY: all clean
 
-all: build/index.html build/main.js build/elm.js build/assets
+all: build/index.html build/style.css build/main.js build/elm.js build/assets
 
 clean:
 	rm -rf build
 
 build/index.html: build index.html
 	cp index.html build
+
+build/style.css: build style.css
+	cp style.css build
 
 build/main.js: build main.js
 	cp main.js build
