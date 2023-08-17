@@ -1,6 +1,6 @@
 .PHONY: all clean
 
-all: build/index.html build/style.css build/main.js build/elm.js build/assets build/favicon.ico
+all: build/index.html build/style.css build/main.js build/elm.js build/assets
 
 clean:
 	rm -rf build
@@ -19,9 +19,6 @@ build/elm.js: build src/Main.elm src/Animate.elm src/Countries.elm
 
 build/assets: build assets
 	cp -r assets build
-
-build/favicon.ico: build favicon.ico
-	cp favicon.ico build
 
 build:
 	mkdir build
