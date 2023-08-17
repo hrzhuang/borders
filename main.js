@@ -110,11 +110,11 @@ const fragmentShader = makeShader(gl, gl.FRAGMENT_SHADER, `
     vec4 sampleTextures() {
         vec4 mapColor = texture2D(mapTexture, vTextureCoords);
         vec4 highlightColor = texture2D(highlightTexture, vTextureCoords);
-        float alpha = highlightColor.w + mapColor.w * (1.0 - highlightColor.w);
-        vec3 rgb =
-            (highlightColor.xyz * highlightColor.w
-                + mapColor.xyz * mapColor.w * (1.0 - highlightColor.w))
-            / alpha;
+
+        // alpha composit highlight over map
+        float alpha = mix(mapColor.w, 1.0, highlightColor.w);
+        vec3 rgb = mix(mapColor.w * mapColor.xyz, highlightColor.xyz,
+            highlightColor.w) / alpha;
         return vec4(rgb, alpha);
     }
 
