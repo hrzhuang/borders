@@ -5,6 +5,7 @@ oninstall = event => {
         return cache.addAll([
             ".",
             "index.html",
+            "manifest.json",
             "style.css",
             "main.js",
             "elm.js",
