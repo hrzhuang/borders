@@ -309,8 +309,10 @@ const loadTexture = (gl, image) => {
 const highlight = document.getElementById("highlight");
 const highlightContainer = document.getElementById("highlight-container");
 
-const svgWidth = 8192;
-const svgHeight = 4096;
+const svgWidth = Math.min(8192, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+
+// we can divide by 2 since MAX_TEXTURE_SIZE should be a power of 2
+const svgHeight = svgWidth / 2;
 
 highlight.setAttribute("width", svgWidth);
 highlight.setAttribute("height", svgHeight);
