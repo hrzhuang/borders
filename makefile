@@ -4,13 +4,16 @@ version = dev
 
 .PHONY: all clean
 
-all: build/index.html build/style.css build/main.js build/elm.js build/sw.js build/assets
+all: build/index.html build/manifest.json build/style.css build/main.js build/elm.js build/sw.js build/assets
 
 clean:
 	rm -rf build
 
 build/index.html: build index.html
 	cp index.html build
+
+build/manifest.json: build manifest.json
+	cp manifest.json build
 
 build/style.css: build style.css
 	cp style.css build
